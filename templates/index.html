@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="CommentIQ — AI-powered comment intelligence. NLP sentiment analysis for YouTube &amp; Reddit using TF-IDF, Logistic Regression, and Naive Bayes.">
+
+    <title>CommentIQ — AI-Powered Comment Intelligence</title>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+
+<body>
+
+    <!-- ============================================ -->
+    <!-- NAVBAR -->
+    <!-- ============================================ -->
+
+    <nav class="navbar" id="mainNavbar">
+        <div class="container" style="max-width: 1140px; margin: 0 auto; padding: 0 1.5rem; display: flex; align-items: center; justify-content: space-between;">
+            <a href="/" class="navbar-brand" id="brandLink">
+                <i class="fa-solid fa-bolt"></i>
+                CommentIQ
+            </a>
+            <div style="display: flex; gap: 0.3rem;">
+                <a href="#features" class="nav-link" id="navFeatures">Features</a>
+                <a href="#workflow" class="nav-link" id="navWorkflow">Workflow</a>
+                <a href="#analyze" class="nav-link" id="navAnalyze">Analyze</a>
+            </div>
+        </div>
+    </nav>
+
+
+    <!-- ============================================ -->
+    <!-- HERO SECTION -->
+    <!-- ============================================ -->
+
+    <section class="hero-section" id="heroSection">
+        <div class="container" style="max-width: 1140px; margin: 0 auto; padding: 0 1.5rem; text-align: center; position: relative; z-index: 2;">
+
+            <div class="hero-badge animate-fadeInUp">
+                <i class="fa-solid fa-circle"></i>
+                NLP Course Project — Sentiment Analysis
+            </div>
+
+            <h1 class="hero-title animate-fadeInUp delay-1">
+                CommentIQ
+            </h1>
+
+            <p class="hero-subtitle animate-fadeInUp delay-2">
+                Analyze sentiment from YouTube & Reddit comments using
+                NLP preprocessing, TF-IDF feature extraction, and ML classification
+            </p>
+
+        </div>
+    </section>
+
+
+    <!-- ============================================ -->
+    <!-- SEARCH SECTION -->
+    <!-- ============================================ -->
+
+    <section class="search-section" id="analyze">
+        <div class="container" style="max-width: 1140px; margin: 0 auto; padding: 0 1.5rem;">
+
+            <div class="search-card animate-fadeInUp delay-3">
+
+                <h3>Analyze Comments</h3>
+
+                <p class="search-desc">
+                    Paste a YouTube video or Reddit post URL to analyze sentiment
+                </p>
+
+                {% if error %}
+                <div class="alert-error" id="errorAlert">
+                    <i class="fa-solid fa-circle-exclamation"></i>
+                    {{ error }}
+                </div>
+                {% endif %}
+
+                <form action="/analyze" method="POST" id="analyzeForm">
+
+                    <div class="search-input-wrapper">
+                        <i class="fa-solid fa-link"></i>
+                        <input
+                            type="text"
+                            class="search-input"
+                            id="urlInput"
+                            name="url"
+                            placeholder="https://www.youtube.com/watch?v=..."
+                            required
+                            autocomplete="off"
+                        >
+                    </div>
+
+                    <div class="comment-limit-row">
+                        <label for="commentLimit">
+                            <i class="fa-solid fa-comments"></i>
+                            Comments to fetch:
+                        </label>
+                        <select name="comment_limit" id="commentLimit" class="limit-select">
+                            <option value="100">100 &nbsp;— Fast (~5s)</option>
+                            <option value="500" selected>500 &nbsp;— Recommended (~15s)</option>
+                            <option value="1000">1,000 — Detailed (~30s)</option>
+                            <option value="2000">2,000 — Comprehensive (~60s)</option>
+                            <option value="5000">Max (up to 5,000)</option>
+                        </select>
+                    </div>
+
+                    <button type="submit" class="search-btn" id="analyzeBtn">
+                        <span class="btn-text">
+                            <i class="fa-solid fa-magnifying-glass-chart"></i>
+                            Analyze Sentiment
+                        </span>
+                        <span class="btn-spinner">
+                            <span class="spinner"></span>
+                            Analyzing... This may take a moment
+                        </span>
+                    </button>
+
+                </form>
+
+            </div>
+
+        </div>
+    </section>
+
+
+    <!-- ============================================ -->
+    <!-- FEATURES SECTION -->
+    <!-- ============================================ -->
+
+    <section class="features-section" id="features">
+        <div class="container" style="max-width: 1140px; margin: 0 auto; padding: 0 1.5rem;">
+
+            <h2 class="section-title">Powered by NLP & Machine Learning</h2>
+            <p class="section-subtitle">A complete sentiment analysis pipeline from data collection to visualization</p>
+
+            <div class="features-grid">
+
+                <div class="feature-card animate-fadeInUp delay-1">
+                    <div class="feature-icon youtube">
+                        <i class="fa-brands fa-youtube"></i>
+                    </div>
+                    <h4>YouTube Analysis</h4>
+                    <p>Fetch and analyze comments from any YouTube video or Shorts</p>
+                </div>
+
+                <div class="feature-card animate-fadeInUp delay-2">
+                    <div class="feature-icon reddit">
+                        <i class="fa-brands fa-reddit"></i>
+                    </div>
+                    <h4>Reddit Analysis</h4>
+                    <p>Analyze discussions and comments from Reddit posts</p>
+                </div>
+
+                <div class="feature-card animate-fadeInUp delay-3">
+                    <div class="feature-icon nlp">
+                        <i class="fa-solid fa-language"></i>
+                    </div>
+                    <h4>NLP Preprocessing</h4>
+                    <p>Tokenization, lemmatization, stopword removal & text cleaning</p>
+                </div>
+
+                <div class="feature-card animate-fadeInUp delay-4">
+                    <div class="feature-icon ml">
+                        <i class="fa-solid fa-brain"></i>
+                    </div>
+                    <h4>ML Classification</h4>
+                    <p>TF-IDF + Logistic Regression & Naive Bayes classification</p>
+                </div>
+
+                <div class="feature-card animate-fadeInUp delay-5">
+                    <div class="feature-icon chart">
+                        <i class="fa-solid fa-chart-pie"></i>
+                    </div>
+                    <h4>Interactive Charts</h4>
+                    <p>Pie charts, bar graphs, word clouds & confusion matrices</p>
+                </div>
+
+                <div class="feature-card animate-fadeInUp delay-6">
+                    <div class="feature-icon download">
+                        <i class="fa-solid fa-file-csv"></i>
+                    </div>
+                    <h4>Export Results</h4>
+                    <p>Download complete analysis results as CSV for further study</p>
+                </div>
+
+            </div>
+
+        </div>
+    </section>
+
+
+    <!-- ============================================ -->
+    <!-- WORKFLOW SECTION -->
+    <!-- ============================================ -->
+
+    <section class="workflow-section" id="workflow">
+        <div class="container" style="max-width: 900px; margin: 0 auto; padding: 0 1.5rem;">
+
+            <h2 class="section-title">Sentiment Analysis Workflow</h2>
+            <p class="section-subtitle">Our step-by-step NLP pipeline processes text through 6 stages</p>
+
+            <div class="workflow-step animate-fadeInUp delay-1">
+                <div class="step-number">1</div>
+                <div class="step-content">
+                    <h5>Data Collection</h5>
+                    <p>Fetch comments from YouTube (Data API v3) or Reddit (PRAW API)</p>
+                    <div class="step-tags">
+                        <span class="step-tag">YouTube API</span>
+                        <span class="step-tag">Reddit API</span>
+                        <span class="step-tag">PRAW</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="workflow-step animate-fadeInUp delay-2">
+                <div class="step-number">2</div>
+                <div class="step-content">
+                    <h5>Text Preprocessing</h5>
+                    <p>Clean and normalize text for NLP analysis</p>
+                    <div class="step-tags">
+                        <span class="step-tag">Tokenization</span>
+                        <span class="step-tag">Lowercasing</span>
+                        <span class="step-tag">Stopword Removal</span>
+                        <span class="step-tag">Lemmatization</span>
+                        <span class="step-tag">URL/Mention Removal</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="workflow-step animate-fadeInUp delay-3">
+                <div class="step-number">3</div>
+                <div class="step-content">
+                    <h5>Feature Extraction</h5>
+                    <p>Convert preprocessed text into numerical feature vectors</p>
+                    <div class="step-tags">
+                        <span class="step-tag">TF-IDF</span>
+                        <span class="step-tag">Bag of Words</span>
+                        <span class="step-tag">N-grams</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="workflow-step animate-fadeInUp delay-4">
+                <div class="step-number">4</div>
+                <div class="step-content">
+                    <h5>Model Building</h5>
+                    <p>Train ML classifiers on labeled sentiment data</p>
+                    <div class="step-tags">
+                        <span class="step-tag">VADER</span>
+                        <span class="step-tag">Logistic Regression</span>
+                        <span class="step-tag">Naive Bayes</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="workflow-step animate-fadeInUp delay-5">
+                <div class="step-number">5</div>
+                <div class="step-content">
+                    <h5>Model Evaluation</h5>
+                    <p>Measure model performance using classification metrics</p>
+                    <div class="step-tags">
+                        <span class="step-tag">Accuracy</span>
+                        <span class="step-tag">Precision</span>
+                        <span class="step-tag">Recall</span>
+                        <span class="step-tag">F1-Score</span>
+                        <span class="step-tag">Confusion Matrix</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="workflow-step animate-fadeInUp delay-6">
+                <div class="step-number">6</div>
+                <div class="step-content">
+                    <h5>Prediction & Visualization</h5>
+                    <p>Classify sentiments and display interactive results</p>
+                    <div class="step-tags">
+                        <span class="step-tag">Pie Chart</span>
+                        <span class="step-tag">Bar Graph</span>
+                        <span class="step-tag">Word Cloud</span>
+                        <span class="step-tag">Plotly Charts</span>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </section>
+
+
+    <!-- ============================================ -->
+    <!-- FOOTER -->
+    <!-- ============================================ -->
+
+    <footer class="footer" id="footer">
+        <div class="container" style="max-width: 1140px; margin: 0 auto; padding: 0 1.5rem;">
+            <p>
+                <strong>CommentIQ</strong> — NLP Sentiment Analysis Project
+                <br>
+                Built with Flask, NLTK, Scikit-learn, Plotly
+            </p>
+        </div>
+    </footer>
+
+
+    <!-- Script -->
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+
+</body>
+
+</html>

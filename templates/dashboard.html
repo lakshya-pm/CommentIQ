@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="CommentIQ Dashboard — View interactive charts, ML model metrics, and comment sentiment analysis results.">
+
+    <title>Dashboard — CommentIQ</title>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
+
+    <!-- Plotly.js -->
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+
+<body>
+
+
+    <!-- ============================================ -->
+    <!-- NAVBAR -->
+    <!-- ============================================ -->
+
+    <nav class="navbar" id="dashNavbar">
+        <div class="container" style="max-width: 1200px; margin: 0 auto; padding: 0 1.5rem; display: flex; align-items: center; justify-content: space-between;">
+            <a href="/" class="navbar-brand" id="dashBrandLink">
+                <i class="fa-solid fa-bolt"></i>
+                CommentIQ
+            </a>
+            <div style="display: flex; gap: 0.3rem; align-items: center;">
+                <a href="/" class="nav-link" id="navHome">
+                    <i class="fa-solid fa-arrow-left"></i> New Analysis
+                </a>
+                <a href="/download" class="nav-link" id="navDownload" style="background: rgba(99,102,241,0.08); color: #6366f1 !important; font-weight: 600;">
+                    <i class="fa-solid fa-download"></i> CSV
+                </a>
+            </div>
+        </div>
+    </nav>
+
+
+    <!-- ============================================ -->
+    <!-- DASHBOARD CONTENT -->
+    <!-- ============================================ -->
+
+    <div class="dashboard-section">
+        <div class="container" style="max-width: 1200px; margin: 0 auto; padding: 0 1.5rem;">
+
+
+            <!-- ======================================== -->
+            <!-- VIDEO / POST INFO -->
+            <!-- ======================================== -->
+
+            <div class="video-info-card animate-fadeInUp" id="videoInfoCard">
+
+                <div style="display: grid; grid-template-columns: {% if thumbnail %}250px 1fr{% else %}1fr{% endif %}; gap: 2rem; align-items: start;">
+
+                    {% if thumbnail %}
+                    <div class="video-thumbnail" id="videoThumbnail">
+                        <img src="{{ thumbnail }}" alt="Video Thumbnail">
+                    </div>
+                    {% endif %}
+
+                    <div>
+                        <span class="platform-badge {{ platform|lower }}" id="platformBadge">
+                            {% if platform == 'YouTube' %}
+                                <i class="fa-brands fa-youtube"></i>
+                            {% else %}
+                                <i class="fa-brands fa-reddit"></i>
+                            {% endif %}
+                            {{ platform }}
+                        </span>
+
+                        <h1 class="video-title" id="videoTitle">{{ title }}</h1>
+
+                        <div class="video-details" id="videoDetails">
+                            {% for key, value in details.items() %}
+                            <div class="detail-item">
+                                <div class="label">{{ key }}</div>
+                                <div class="value">{{ value }}</div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <!-- ======================================== -->
+            <!-- SENTIMENT OVERVIEW -->
+            <!-- ======================================== -->
+
+            <div class="section-header animate-fadeInUp delay-1">
+                <div class="section-icon">
+                    <i class="fa-solid fa-chart-simple"></i>
+                </div>
+                <div>
+                    <h2>Sentiment Overview</h2>
+                    <p class="section-desc">Classification results from {{ total_analyzed }} analyzed comments</p>
+                </div>
+            </div>
+
+            <div class="stat-cards-row animate-fadeInUp delay-2" id="statCards">
+
+                <div class="stat-card total" id="statTotal">
+                    <div class="stat-emoji">📊</div>
+                    <div class="stat-value">{{ summary.total }}</div>
+                    <div class="stat-label">Total Comments</div>
+                </div>
+
+                <div class="stat-card positive" id="statPositive">
+                    <div class="stat-emoji">😊</div>
+                    <div class="stat-value">{{ summary.positive }}</div>
+                    <div class="stat-label">Positive</div>
+                    <div class="stat-percent">{{ summary.positive_percent }}%</div>
+                </div>
+
+                <div class="stat-card neutral" id="statNeutral">
+                    <div class="stat-emoji">😐</div>
+                    <div class="stat-value">{{ summary.neutral }}</div>
+                    <div class="stat-label">Neutral</div>
+                    <div class="stat-percent">{{ summary.neutral_percent }}%</div>
+                </div>
+
+                <div class="stat-card negative" id="statNegative">
+                    <div class="stat-emoji">😡</div>
+                    <div class="stat-value">{{ summary.negative }}</div>
+                    <div class="stat-label">Negative</div>
+                    <div class="stat-percent">{{ summary.negative_percent }}%</div>
+                </div>
+
+            </div>
+
+
+            <!-- ======================================== -->
+            <!-- CHARTS ROW 1: Pie + Bar -->
+            <!-- ======================================== -->
+
+            <div class="charts-2col animate-fadeInUp delay-3">
+
+                <div class="chart-card" id="pieChartCard">
+                    <div class="chart-title">
+                        <i class="fa-solid fa-chart-pie"></i>
+                        Sentiment Distribution
+                    </div>
+                    <div class="chart-container" id="pieChart"></div>
+                </div>
+
+                <div class="chart-card" id="barChartCard">
+                    <div class="chart-title">
+                        <i class="fa-solid fa-chart-column"></i>
+                        Sentiment Count
+                    </div>
+                    <div class="chart-container" id="barChart"></div>
+                </div>
+
+            </div>
+
+
+            <!-- ======================================== -->
+            <!-- CHARTS ROW 2: Word Cloud + Distribution -->
+            <!-- ======================================== -->
+
+            <div class="charts-2col animate-fadeInUp delay-4">
+
+                <div class="chart-card" id="wordcloudCard">
+                    <div class="chart-title">
+                        <i class="fa-solid fa-cloud"></i>
+                        Word Cloud
+                    </div>
+                    <img
+                        src="{{ url_for('static', filename='generated/wordcloud.png') }}"
+                        class="wordcloud-img"
+                        alt="Word Cloud"
+                        id="wordcloudImg"
+                    >
+                </div>
+
+                <div class="chart-card" id="compoundCard">
+                    <div class="chart-title">
+                        <i class="fa-solid fa-wave-square"></i>
+                        Compound Score Distribution
+                    </div>
+                    <div class="chart-container" id="compoundChart"></div>
+                </div>
+
+            </div>
+
+
+            <!-- ======================================== -->
+            <!-- CHARTS ROW 3: Top Positive + Negative -->
+            <!-- ======================================== -->
+
+            <div class="charts-2col animate-fadeInUp delay-5">
+
+                <div class="chart-card" id="positiveWordsCard">
+                    <div class="chart-title">
+                        <i class="fa-solid fa-face-smile" style="color: #10b981;"></i>
+                        Top Positive Words
+                    </div>
+                    <div class="chart-container" id="positiveWordsChart"></div>
+                </div>
+
+                <div class="chart-card" id="negativeWordsCard">
+                    <div class="chart-title">
+                        <i class="fa-solid fa-face-frown" style="color: #ef4444;"></i>
+                        Top Negative Words
+                    </div>
+                    <div class="chart-container" id="negativeWordsChart"></div>
+                </div>
+
+            </div>
+
+
+            <!-- ======================================== -->
+            <!-- TEXT PREPROCESSING PIPELINE DEMO -->
+            <!-- ======================================== -->
+
+            {% if preprocessing_demo %}
+            <div class="section-header animate-fadeInUp">
+                <div class="section-icon">
+                    <i class="fa-solid fa-filter"></i>
+                </div>
+                <div>
+                    <h2>Text Preprocessing Pipeline</h2>
+                    <p class="section-desc">Step-by-step preprocessing of a sample comment</p>
+                </div>
+            </div>
+
+            <div class="pipeline-card animate-fadeInUp" id="pipelineCard">
+
+                <div style="margin-bottom: 1rem;">
+                    <span style="font-size: 0.8rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;">Original Text</span>
+                    <p style="font-family: 'JetBrains Mono', monospace; font-size: 0.88rem; color: #0f172a; margin-top: 0.3rem; padding: 0.8rem; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0; word-break: break-word;">
+                        {{ preprocessing_demo.original }}
+                    </p>
+                </div>
+
+                {% for step in preprocessing_demo.steps %}
+                <div class="pipeline-step">
+                    <div class="step-name">{{ step.step }}</div>
+                    <div class="step-result">{{ step.result }}</div>
+                </div>
+                {% endfor %}
+
+                <div style="margin-top: 1rem; padding: 0.8rem; background: #ecfdf5; border-radius: 8px; border: 1px solid rgba(16, 185, 129, 0.2);">
+                    <span style="font-size: 0.8rem; font-weight: 600; color: #10b981; text-transform: uppercase; letter-spacing: 0.05em;">Final Cleaned Text</span>
+                    <p style="font-family: 'JetBrains Mono', monospace; font-size: 0.88rem; color: #0f172a; margin-top: 0.3rem; word-break: break-word;">
+                        {{ preprocessing_demo.cleaned }}
+                    </p>
+                </div>
+
+            </div>
+            {% endif %}
+
+
+            <!-- ======================================== -->
+            <!-- ML MODEL EVALUATION -->
+            <!-- ======================================== -->
+
+            {% if ml_metrics %}
+            <div class="section-header animate-fadeInUp">
+                <div class="section-icon">
+                    <i class="fa-solid fa-flask"></i>
+                </div>
+                <div>
+                    <h2>Model Evaluation</h2>
+                    <p class="section-desc">
+                        Performance metrics — Trained on {{ ml_metrics.get('train_size', 0) }} samples,
+                        tested on {{ ml_metrics.get('test_size', 0) }} samples
+                    </p>
+                </div>
+            </div>
+
+
+            <!-- Logistic Regression Metrics -->
+            {% if ml_metrics.get('logistic_regression') %}
+            <div style="margin-bottom: 0.8rem;">
+                <span style="font-size: 0.85rem; font-weight: 700; color: #6366f1;">
+                    <i class="fa-solid fa-diagram-project"></i> Logistic Regression
+                </span>
+            </div>
+
+            <div class="metrics-grid animate-fadeInUp" id="lrMetrics">
+                <div class="metric-card">
+                    <div class="metric-value">{{ ml_metrics.logistic_regression.accuracy }}%</div>
+                    <div class="metric-label">Accuracy</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{{ ml_metrics.logistic_regression.precision }}%</div>
+                    <div class="metric-label">Precision</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{{ ml_metrics.logistic_regression.recall }}%</div>
+                    <div class="metric-label">Recall</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{{ ml_metrics.logistic_regression.f1_score }}%</div>
+                    <div class="metric-label">F1-Score</div>
+                </div>
+            </div>
+            {% endif %}
+
+
+            <!-- Naive Bayes Metrics -->
+            {% if ml_metrics.get('naive_bayes') %}
+            <div style="margin-bottom: 0.8rem;">
+                <span style="font-size: 0.85rem; font-weight: 700; color: #8b5cf6;">
+                    <i class="fa-solid fa-diagram-project"></i> Naive Bayes
+                </span>
+            </div>
+
+            <div class="metrics-grid animate-fadeInUp" id="nbMetrics">
+                <div class="metric-card">
+                    <div class="metric-value" style="color: #8b5cf6;">{{ ml_metrics.naive_bayes.accuracy }}%</div>
+                    <div class="metric-label">Accuracy</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value" style="color: #8b5cf6;">{{ ml_metrics.naive_bayes.precision }}%</div>
+                    <div class="metric-label">Precision</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value" style="color: #8b5cf6;">{{ ml_metrics.naive_bayes.recall }}%</div>
+                    <div class="metric-label">Recall</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value" style="color: #8b5cf6;">{{ ml_metrics.naive_bayes.f1_score }}%</div>
+                    <div class="metric-label">F1-Score</div>
+                </div>
+            </div>
+            {% endif %}
+
+
+            <!-- Model Comparison + Confusion Matrices -->
+            <div class="charts-3col animate-fadeInUp">
+
+                <div class="chart-card" id="modelComparisonCard">
+                    <div class="chart-title">
+                        <i class="fa-solid fa-scale-balanced"></i>
+                        Model Comparison
+                    </div>
+                    <div class="chart-container" id="modelComparisonChart"></div>
+                </div>
+
+                <div class="chart-card" id="lrConfusionCard">
+                    <div class="chart-title">
+                        <i class="fa-solid fa-table-cells"></i>
+                        LR Confusion Matrix
+                    </div>
+                    <div class="chart-container" id="lrConfusionChart"></div>
+                </div>
+
+                <div class="chart-card" id="nbConfusionCard">
+                    <div class="chart-title">
+                        <i class="fa-solid fa-table-cells"></i>
+                        NB Confusion Matrix
+                    </div>
+                    <div class="chart-container" id="nbConfusionChart"></div>
+                </div>
+
+            </div>
+
+            {% endif %}
+
+
+            <!-- ======================================== -->
+            <!-- TOP COMMENTS -->
+            <!-- ======================================== -->
+
+            <div class="section-header animate-fadeInUp">
+                <div class="section-icon">
+                    <i class="fa-solid fa-comments"></i>
+                </div>
+                <div>
+                    <h2>Sample Comments by Sentiment</h2>
+                    <p class="section-desc">Top 5 comments from each sentiment category</p>
+                </div>
+            </div>
+
+            <div class="comments-3col">
+
+                <!-- Positive Comments -->
+                <div class="comment-card animate-fadeInUp delay-1" id="positiveComments">
+                    <div class="card-header-custom positive">
+                        <i class="fa-solid fa-face-smile"></i>
+                        Positive Comments
+                    </div>
+                    <div class="comment-list">
+                        {% for row in positive_comments %}
+                        <div class="comment-item">
+                            {{ row.get('original_text', row.get('text', '')) }}
+                        </div>
+                        {% endfor %}
+                        {% if not positive_comments %}
+                        <div class="comment-item" style="color: #94a3b8; text-align: center;">
+                            No positive comments found
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Neutral Comments -->
+                <div class="comment-card animate-fadeInUp delay-2" id="neutralComments">
+                    <div class="card-header-custom neutral">
+                        <i class="fa-solid fa-face-meh"></i>
+                        Neutral Comments
+                    </div>
+                    <div class="comment-list">
+                        {% for row in neutral_comments %}
+                        <div class="comment-item">
+                            {{ row.get('original_text', row.get('text', '')) }}
+                        </div>
+                        {% endfor %}
+                        {% if not neutral_comments %}
+                        <div class="comment-item" style="color: #94a3b8; text-align: center;">
+                            No neutral comments found
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Negative Comments -->
+                <div class="comment-card animate-fadeInUp delay-3" id="negativeComments">
+                    <div class="card-header-custom negative">
+                        <i class="fa-solid fa-face-frown"></i>
+                        Negative Comments
+                    </div>
+                    <div class="comment-list">
+                        {% for row in negative_comments %}
+                        <div class="comment-item">
+                            {{ row.get('original_text', row.get('text', '')) }}
+                        </div>
+                        {% endfor %}
+                        {% if not negative_comments %}
+                        <div class="comment-item" style="color: #94a3b8; text-align: center;">
+                            No negative comments found
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+
+            </div>
+
+
+            <!-- ======================================== -->
+            <!-- ACTION BAR -->
+            <!-- ======================================== -->
+
+            <div class="action-bar animate-fadeInUp" id="actionBar">
+
+                <a href="/download" class="action-btn primary" id="downloadBtn">
+                    <i class="fa-solid fa-download"></i>
+                    Download CSV Report
+                </a>
+
+                <a href="/" class="action-btn secondary" id="newAnalysisBtn">
+                    <i class="fa-solid fa-rotate"></i>
+                    New Analysis
+                </a>
+
+            </div>
+
+
+        </div>
+    </div>
+
+
+    <!-- ============================================ -->
+    <!-- FOOTER -->
+    <!-- ============================================ -->
+
+    <footer class="footer" id="dashFooter">
+        <div class="container" style="max-width: 1200px; margin: 0 auto; padding: 0 1.5rem;">
+            <p>
+                <strong>CommentIQ</strong> — NLP Sentiment Analysis Project
+                <br>
+                Libraries: pandas, numpy, nltk, scikit-learn, matplotlib, seaborn, wordcloud, plotly
+            </p>
+        </div>
+    </footer>
+
+
+    <!-- ============================================ -->
+    <!-- PLOTLY CHART RENDERING -->
+    <!-- ============================================ -->
+
+    <script>
+
+        // Plotly config
+        const plotlyConfig = {
+            responsive: true,
+            displayModeBar: false
+        };
+
+        // Render a Plotly chart — data is already a JS object (inlined by Jinja2)
+        function renderChart(elementId, chartObj) {
+            try {
+                if (chartObj && chartObj.data) {
+                    Plotly.newPlot(elementId, chartObj.data, chartObj.layout || {}, plotlyConfig);
+                }
+            } catch (e) {
+                console.warn('Chart render error [' + elementId + ']:', e);
+            }
+        }
+
+        // Render all charts on load
+        document.addEventListener('DOMContentLoaded', function () {
+
+            // Sentiment Charts
+            renderChart('pieChart',      {{ pie_chart_json | safe }});
+            renderChart('barChart',      {{ bar_chart_json | safe }});
+            renderChart('compoundChart', {{ compound_chart_json | safe }});
+
+            // Top Words Charts
+            renderChart('positiveWordsChart', {{ positive_words_json | safe }});
+            renderChart('negativeWordsChart', {{ negative_words_json | safe }});
+
+            {% if ml_metrics %}
+            // ML Evaluation Charts
+            renderChart('modelComparisonChart', {{ model_comparison_json | safe }});
+            renderChart('lrConfusionChart',     {{ lr_confusion_json | safe }});
+            renderChart('nbConfusionChart',     {{ nb_confusion_json | safe }});
+            {% endif %}
+
+        });
+
+    </script>
+
+
+    <!-- Custom JS -->
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+
+</body>
+
+</html>
