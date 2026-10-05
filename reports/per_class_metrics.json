@@ -19,6 +19,44 @@
       "support": 95
     }
   },
-  "logistic_regression": {},
-  "naive_bayes": {}
+  "logistic_regression": {
+    "Positive": {
+      "precision": 85.71,
+      "recall": 97.3,
+      "f1": 91.14,
+      "support": 37
+    },
+    "Negative": {
+      "precision": 97.22,
+      "recall": 94.59,
+      "f1": 95.89,
+      "support": 37
+    },
+    "Neutral": {
+      "precision": 93.33,
+      "recall": 73.68,
+      "f1": 82.35,
+      "support": 19
+    }
+  },
+  "naive_bayes": {
+    "Positive": {
+      "precision": 100.0,
+      "recall": 94.59,
+      "f1": 97.22,
+      "support": 37
+    },
+    "Negative": {
+      "precision": 94.59,
+      "recall": 94.59,
+      "f1": 94.59,
+      "support": 37
+    },
+    "Neutral": {
+      "precision": 90.48,
+      "recall": 100.0,
+      "f1": 95.0,
+      "support": 19
+    }
+  }
 }

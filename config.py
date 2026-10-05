@@ -26,13 +26,14 @@ REDDIT_CLIENT_SECRET = os.getenv("REDDIT_CLIENT_SECRET")
 REDDIT_USER_AGENT    = os.getenv("REDDIT_USER_AGENT")
 
 # ----------------------------
-# Optional feature flags
+# Optional feature flags (future work — not yet wired into the app)
 # ----------------------------
 
-# Set USE_LORA_ADAPTER=true in .env to use the LoRA-fine-tuned RoBERTa adapter
-# instead of the base cardiffnlp model.  Requires running scripts/finetune_lora.py first.
-USE_LORA_ADAPTER = os.getenv("USE_LORA_ADAPTER", "false").lower() == "true"
+# USE_LORA_ADAPTER: would load a LoRA fine-tuned adapter instead of the base
+# cardiffnlp model.  Requires running scripts/finetune_lora.py first.
+# Not implemented in this version.
+# USE_LORA_ADAPTER = os.getenv("USE_LORA_ADAPTER", "false").lower() == "true"
 
-# Set DEMO_MODE=true to load a bundled sample result without API keys.
-# Useful for live demos where API quota is a concern.
-DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
+# DEMO_MODE: would return a pre-cached result without API calls.
+# Not implemented in this version.
+# DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"

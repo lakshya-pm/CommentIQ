@@ -55,10 +55,10 @@
     ]
   },
   "logistic_regression": {
-    "cv_acc_mean": 91.13,
-    "cv_acc_std": 1.72,
-    "cv_f1_mean": 90.26,
-    "cv_f1_std": 1.96,
+    "cv_acc_mean": 92.22,
+    "cv_acc_std": 1.82,
+    "cv_f1_mean": 92.36,
+    "cv_f1_std": 1.69,
     "accuracy": 91.4,
     "precision": 91.85,
     "recall": 91.4,
@@ -85,13 +85,33 @@
       "Positive",
       "Negative",
       "Neutral"
-    ]
+    ],
+    "per_class": {
+      "Positive": {
+        "precision": 85.71,
+        "recall": 97.3,
+        "f1": 91.14,
+        "support": 37
+      },
+      "Negative": {
+        "precision": 97.22,
+        "recall": 94.59,
+        "f1": 95.89,
+        "support": 37
+      },
+      "Neutral": {
+        "precision": 93.33,
+        "recall": 73.68,
+        "f1": 82.35,
+        "support": 19
+      }
+    }
   },
   "naive_bayes": {
-    "cv_acc_mean": 92.87,
-    "cv_acc_std": 2.39,
-    "cv_f1_mean": 93.07,
-    "cv_f1_std": 2.69,
+    "cv_acc_mean": 91.79,
+    "cv_acc_std": 2.91,
+    "cv_f1_mean": 91.81,
+    "cv_f1_std": 3.3,
     "accuracy": 95.7,
     "precision": 95.9,
     "recall": 95.7,
@@ -118,7 +138,27 @@
       "Positive",
       "Negative",
       "Neutral"
-    ]
+    ],
+    "per_class": {
+      "Positive": {
+        "precision": 100.0,
+        "recall": 94.59,
+        "f1": 97.22,
+        "support": 37
+      },
+      "Negative": {
+        "precision": 94.59,
+        "recall": 94.59,
+        "f1": 94.59,
+        "support": 37
+      },
+      "Neutral": {
+        "precision": 90.48,
+        "recall": 100.0,
+        "f1": 95.0,
+        "support": 19
+      }
+    }
   },
   "roberta": null,
   "n_folds": 5,

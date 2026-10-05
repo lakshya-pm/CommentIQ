@@ -7,14 +7,17 @@
 
 ## 0. Quick Reference — Numbers to Know Cold
 
-| Model | CV Accuracy | CV Macro-F1 | Held-out Acc |
-|-------|:-----------:|:-----------:|:------------:|
+| Model | CV Accuracy | CV Macro-F1 | Held-out Acc\* |
+|-------|:-----------:|:-----------:|:--------------:|
 | VADER | N/A | N/A | **92.64%** |
-| Logistic Regression | **91.1 ± 1.7%** | 90.3 ± 2.0% | 91.40% |
-| Naive Bayes | **92.9 ± 2.4%** | 93.1 ± 2.7% | 95.70% |
-| RoBERTa | — | — | ~72% (TweetEval) |
+| Logistic Regression | **92.2 ± 1.8%** | 90.3 ± 2.0% | 91.40% |
+| Naive Bayes | **91.8 ± 2.9%** | 93.1 ± 2.7% | 95.70% |
+| RoBERTa | — | — | Not eval. locally |
 
-Training set: **462 curated samples** · Test: stratified 5-fold CV + 20% held-out
+\*VADER held-out = all 462 samples (no split). LR/NB = 93-sample 80/20 split. **Columns are not directly comparable.**  
+CV accuracy (5-fold Pipeline, no feature leakage) is the correct headline metric for LR/NB.
+
+Training set: **462 curated samples** · Evaluation: stratified 5-fold CV (Pipeline)
 
 > Regenerate anytime: `python scripts/evaluate.py`
 
@@ -137,20 +140,20 @@ Dashboard (Plotly + word cloud + CSV download)
 ### RoBERTa (`cardiffnlp/twitter-roberta-base-sentiment-latest`)
 - **Type**: Transformer, 125M parameters
 - **Input**: Raw original text (own BPE tokenizer, handles emojis)
-- **Pre-training**: 124M tweets from TimeLMs project (Loureiro et al. 2022)
-- **Fine-tuning**: Twitter Sentiment (TweetEval) benchmark
+- **Pre-training**: ~124M tweets from TimeLMs project (Loureiro et al. 2022)
+- **Fine-tuning**: Twitter Sentiment (TweetEval benchmark)
 - **Why this model**: Pre-trained on social-media text including YouTube-like language; has a built-in sentiment classification head
-- **Benchmark**: ~72% macro-F1 on TweetEval (3-class sentiment)
+- **Note**: Not evaluated locally in this project — TweetEval benchmark F-measure is the published reference figure
 
 ### Viva Q&A
 **Q: Why use four models instead of just RoBERTa?**
-> RoBERTa is slow (~2s per batch) and requires GPU for speed. LR/NB are instant (<10ms). VADER is completely offline. The ensemble combines speed with accuracy. Also, using multiple approaches is a richer academic demonstration.
+> RoBERTa is slow (~seconds per batch on CPU) and requires GPU for comfortable speed. LR/NB are instant (<10ms). VADER is completely offline. The ensemble combines the strengths of rule-based, statistical, and neural approaches — a richer academic demonstration.
 
 **Q: Why does Naive Bayes sometimes outperform Logistic Regression on the test set?**
-> NB with small, well-curated datasets often outperforms LR because the independence assumption is approximately satisfied in clean training data. NB is also more robust to the small sample sizes (462 examples).
+> NB with small, well-curated datasets often matches or outperforms LR because the conditional independence assumption is approximately satisfied for clean bag-of-words features. NB is also less sensitive to sample size.
 
 **Q: What is the domain gap?**
-> LR/NB are trained on 462 clean curated sentences. Real YouTube comments use slang, abbreviations, emoji-only comments, and non-English text that the TF-IDF vocabulary has never seen. About 30-40% of live comments get zero feature overlap — those are flagged "Low confidence" and deferred to RoBERTa.
+> LR/NB are trained on 462 clean curated sentences. Real YouTube comments use slang, abbreviations, emoji-only comments, and non-English text that the TF-IDF vocabulary has never seen. About **28%** of live comments get zero feature overlap — those are flagged "Low confidence" and deferred to RoBERTa.
 
 ---
 
@@ -163,21 +166,21 @@ Dashboard (Plotly + word cloud + CSV download)
 - VADER was designed specifically for social media (Twitter, Facebook)
 - Lexicon of 7500+ labeled features with valence scores
 - 5 heuristics: punctuation, capitalization, degree modifiers, conjunctions, tri-gram negation
-- 82.9% accuracy on Twitter data (our VADER scores 92.64% on the curated set)
+- Reports strong F-measures on social media benchmarks (see paper Table 3)
 
-### RoBERTa Source Paper
-**TimeLMs** — Loureiro et al. (2022). *TimeLMs: Diachronic Language Models from Twitter*. ACL Findings.
+### RoBERTa Source Papers
+**TimeLMs** — Loureiro et al. (2022). *TimeLMs: Diachronic Language Models from Twitter*. ACL 2022 **System Demonstrations** track. https://arxiv.org/abs/2202.03829
 
 **TweetEval** — Barbieri et al. (2020). *TweetEval: Unified Benchmark and Comparative Evaluation for Tweet Classification*. EMNLP Findings.
 
 ### Literature Survey — Key Points
 
-| Paper | Model | Dataset | Accuracy | Limitation |
-|-------|-------|---------|----------|-----------|
-| Hutto & Gilbert 2014 | VADER | Twitter | 82.9% | Rule-based, misses context |
-| Barbieri et al. 2020 | RoBERTa | TweetEval | 72.6% | Social media domain only |
-| Zhang et al. 2018 | BERT | SST-2 | 94.9% | Requires labelled in-domain data |
-| This project | Ensemble | Curated 462 | 92.64% (VADER), 91.1% (LR), 92.9% (NB) | Domain gap on live data |
+| Paper | Model | Dataset | Result | Limitation |
+|-------|-------|---------|--------|-----------|
+| Hutto & Gilbert 2014 | VADER | Social media | Strong F-measure (see paper Table 3) | Rule-based, misses context |
+| Barbieri et al. 2020 | RoBERTa | TweetEval | Best on benchmark | Social media domain only |
+| Devlin et al. 2019 | BERT | SST-2 | 94.9% | Requires labelled in-domain data |
+| This project | Ensemble | Curated 462 | VADER 92.64%, LR 92.2%, NB 91.8% (CV) | Domain gap on live data |
 
 ---
 
@@ -199,9 +202,13 @@ Dashboard (Plotly + word cloud + CSV download)
 **Which to report**: **Macro-F1 is most important** for imbalanced classes (Neutral is underrepresented at 95/462 ≈ 21%). Accuracy alone is misleading when class sizes differ.
 
 ### Our reported numbers (from `reports/metrics.json`)
-- **VADER**: 92.64% accuracy · 91.71% macro-F1
-- **LR**: 91.1 ± 1.7% CV accuracy · 90.3% macro-F1
-- **NB**: 92.9 ± 2.4% CV accuracy · 93.1% macro-F1
+
+> **Evaluation note:** VADER is scored on all 462 samples (no train/test split — it has no learned parameters). LR/NB 5-fold CV numbers are the headline metric (leak-free Pipeline). The 93-sample held-out accuracy is supplementary (visual confusion matrix only).
+
+- **VADER**: 92.64% accuracy on full 462-sample set · 91.71% macro-F1
+- **LR**: 92.2 ± 1.8% CV accuracy · 90.3% CV macro-F1
+- **NB**: 91.8 ± 2.9% CV accuracy · 93.1% CV macro-F1
+- **RoBERTa**: Not evaluated locally — see TweetEval paper for published figures
 
 ---
 
@@ -209,7 +216,7 @@ Dashboard (Plotly + word cloud + CSV download)
 
 State these before the examiner asks:
 
-1. **Domain gap**: LR/NB vocabulary trained on 462 curated sentences; ~30-40% of live YouTube comments have zero feature overlap. Mitigated by the "Low confidence" flag + RoBERTa fallback.
+1. **Domain gap**: LR/NB vocabulary trained on 462 curated sentences; ~28% of live YouTube comments have zero feature overlap. Mitigated by the “Low confidence” flag + RoBERTa fallback.
 
 2. **Small training set**: 462 samples is small. 5-fold CV addresses the single-split inflation but doesn't eliminate overfitting risk.
 
@@ -233,6 +240,10 @@ python app.py
 # Have these URLs ready in notepad:
 # YouTube (mixed sentiment): https://www.youtube.com/watch?v=dQw4w9WgXcQ
 # Reddit (tech discussion):   https://www.reddit.com/r/MachineLearning/
+
+# IMPORTANT: Test the API key beforehand — YouTube quota is 10,000 units/day.
+# If quota is exceeded, use a different Google Cloud project API key.
+# There is no offline demo mode in this version.
 ```
 
 ### During the demo
@@ -247,11 +258,7 @@ python app.py
 5. **Click Download CSV** — show the per-comment breakdown with all 4 model labels
 
 ### If the API quota is exceeded
-```bash
-# In .env:
-DEMO_MODE=true
-# Restart Flask — shows bundled sample result without making API calls
-```
+> Test the API the day before and note the quota usage. YouTube Data API v3 gives 10,000 units/day. 500 comments costs ~5 units. Demonstrate with Reddit instead (PRAW has no strict quota).
 
 ---
 
@@ -290,10 +297,10 @@ DEMO_MODE=true
 > Term Frequency-Inverse Document Frequency. TF = how often a word appears in one comment. IDF = log(total comments / comments containing the word). Words that appear in every comment (like "the") get low IDF; rare discriminative words get high IDF. We use unigrams + bigrams (up to 5000 features).
 
 **Q: Why use an ensemble?**
-> Each model has complementary strengths. VADER handles slang and emojis. LR/NB are fast and trained on curated examples. RoBERTa understands context and word order. Majority voting reduces individual model errors — empirically, ensemble accuracy is higher than any single model.
+> Each model has complementary strengths. VADER handles slang and emojis. LR/NB are fast and trained on curated examples. RoBERTa understands context and word order. Combining them via majority voting reduces individual model errors. Formally measuring ensemble superiority on live data requires ground-truth labels — which we don't have for live comments.
 
 **Q: What is RoBERTa?**
 > Robustly Optimized BERT Approach. A transformer architecture pre-trained on 160GB of text via masked language modeling. We use the `cardiffnlp/twitter-roberta-base-sentiment-latest` variant fine-tuned on 124M tweets — directly relevant to our social-media use case.
 
 **Q: What would you improve with more time?**
-> 1. In-domain training data — manually label 2000+ YouTube comments for LR/NB training. 2. LoRA fine-tune RoBERTa on those labels (script already written: `scripts/finetune_lora.py`). 3. Multi-language support via `multilingual-sentiment-analysis` models.
+> 1. In-domain training data — manually label 2000+ YouTube comments for LR/NB training (attempted with Kaggle dataset but found ~20% label noise). 2. LoRA fine-tune RoBERTa on those labels (script exists: `scripts/finetune_lora.py`). 3. Multi-language support.

@@ -42,6 +42,7 @@ from nltk.sentiment.vader import SentimentIntensityAnalyzer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.naive_bayes import MultinomialNB
+from sklearn.pipeline import Pipeline
 from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.metrics import (
     accuracy_score,
@@ -238,9 +239,19 @@ class SentimentModels:
         Train LR and NB on preprocessed text + labels.
 
         Evaluation strategy:
-          - Stratified 5-fold CV → mean accuracy ± SD, macro-F1 ± SD
-          - Final models trained on ALL data (used for prediction)
-          - .pkl files saved after training
+          - Stratified 5-fold CV using sklearn Pipeline.
+            The TF-IDF vectorizer is fitted ONLY on each fold's training set,
+            so no vocabulary or IDF information from the validation fold leaks
+            into the feature matrix.  This is the correct, leak-free approach.
+          - Reported metrics: mean accuracy ± SD, mean macro-F1 ± SD across folds.
+          - Final production models are trained on ALL data (maximises accuracy
+            for prediction; CV metrics are the honest evaluation estimate).
+          - .pkl files saved after training.
+
+        NOTE on the held-out confusion matrix:
+          The displayed confusion matrix uses a single 80/20 split on the
+          already-transformed X (minor leakage).  It is shown for visual
+          inspection only — use the 5-fold CV numbers for any reported metric.
 
         Args:
             texts  : list of preprocessed strings
@@ -251,19 +262,27 @@ class SentimentModels:
             self.is_trained = False
             return
 
-        X = self.feature_extractor.fit_transform(texts)
-        y = np.array(labels)
+        texts_arr = np.array(texts)
+        y         = np.array(labels)
 
-        # Save vectorizer
+        # Shared TF-IDF hyperparameters (used in both Pipeline CV and final model)
+        _tfidf_params = dict(
+            max_features=5000,
+            ngram_range=(1, 2),
+            min_df=1,
+            max_df=0.95,
+            sublinear_tf=True,
+        )
+
+        # ------- Final production model (fit vectorizer on ALL data) -------
+        X = self.feature_extractor.fit_transform(texts)
         _save_pkl(self.feature_extractor.vectorizer, _TFIDF_PATH)
 
-        # Choose n_folds safely: StratifiedKFold requires each class to have
-        # at least n_splits members.  Fall back to fewer folds for small datasets.
+        # Choose n_folds safely
         min_class_size = min(Counter(y).values())
         n_folds        = min(5, min_class_size)
         if n_folds < 2:
             logger.warning("Too few samples per class for CV; skipping fold eval.")
-            # Train on all data, skip CV
             self.logistic_regression.fit(X, y)
             self.naive_bayes.fit(X, y)
             _save_pkl(self.logistic_regression, _LR_PATH)
@@ -276,52 +295,55 @@ class SentimentModels:
             self.is_trained = True
             return
 
-        skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+        # ------- Leak-free 5-fold CV using sklearn Pipeline -------
+        # Each Pipeline fits its own TF-IDF on the fold's training text,
+        # so validation features are never seen during vectorizer fitting.
+        _lr_pipe = Pipeline([
+            ("tfidf", TfidfVectorizer(**_tfidf_params)),
+            ("clf",   LogisticRegression(max_iter=2000, C=5.0, solver="lbfgs",
+                                         random_state=42)),
+        ])
+        _nb_pipe = Pipeline([
+            ("tfidf", TfidfVectorizer(**_tfidf_params)),
+            ("clf",   MultinomialNB(alpha=0.1)),
+        ])
 
+        skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
         lr_fold_acc, lr_fold_f1 = [], []
         nb_fold_acc, nb_fold_f1 = [], []
 
-        for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
-            X_tr, X_val = X[train_idx], X[val_idx]
+        for _, (train_idx, val_idx) in enumerate(skf.split(texts_arr, y)):
+            X_tr_raw = texts_arr[train_idx].tolist()
+            X_val_raw = texts_arr[val_idx].tolist()
             y_tr, y_val = y[train_idx], y[val_idx]
 
-            # LR fold
-            _lr_fold = LogisticRegression(
-                max_iter=2000, random_state=42, C=5.0, solver="lbfgs"
-            )
-            _lr_fold.fit(X_tr, y_tr)
-            _lr_pred = _lr_fold.predict(X_val)
+            # LR fold — TF-IDF fit only on X_tr_raw
+            _lr_pipe.fit(X_tr_raw, y_tr)
+            _lr_pred = _lr_pipe.predict(X_val_raw)
             lr_fold_acc.append(accuracy_score(y_val, _lr_pred))
-            lr_fold_f1.append(
-                f1_score(y_val, _lr_pred, average="macro", zero_division=0)
-            )
+            lr_fold_f1.append(f1_score(y_val, _lr_pred, average="macro", zero_division=0))
 
             # NB fold
-            _nb_fold = MultinomialNB(alpha=0.1)
-            _nb_fold.fit(X_tr, y_tr)
-            _nb_pred = _nb_fold.predict(X_val)
+            _nb_pipe.fit(X_tr_raw, y_tr)
+            _nb_pred = _nb_pipe.predict(X_val_raw)
             nb_fold_acc.append(accuracy_score(y_val, _nb_pred))
-            nb_fold_f1.append(
-                f1_score(y_val, _nb_pred, average="macro", zero_division=0)
-            )
+            nb_fold_f1.append(f1_score(y_val, _nb_pred, average="macro", zero_division=0))
 
-        # ----- Train final models on all data -----
+        # ------- Train final production models on ALL data -------
         self.logistic_regression.fit(X, y)
         self.naive_bayes.fit(X, y)
+        _save_pkl(self.logistic_regression, _LR_PATH)
+        _save_pkl(self.naive_bayes,         _NB_PATH)
 
-        # Held-out split for confusion matrix display
+        # Held-out split for confusion matrix display only (minor leakage — see docstring)
         try:
             X_tr2, X_te, y_tr2, y_te = train_test_split(
                 X, y, test_size=0.2, random_state=42, stratify=y
             )
         except ValueError:
-            X_tr2, X_te, y_tr2, y_te = train_test_split(
-                X, y, test_size=0.2, random_state=42
-            )
+            X_tr2, X_te, y_tr2, y_te = train_test_split(X, y, test_size=0.2, random_state=42)
 
-        _lr_te = LogisticRegression(
-            max_iter=2000, random_state=42, C=5.0, solver="lbfgs"
-        )
+        _lr_te = LogisticRegression(max_iter=2000, C=5.0, solver="lbfgs", random_state=42)
         _lr_te.fit(X_tr2, y_tr2)
         lr_held_pred = _lr_te.predict(X_te)
 
@@ -329,14 +351,7 @@ class SentimentModels:
         _nb_te.fit(X_tr2, y_tr2)
         nb_held_pred = _nb_te.predict(X_te)
 
-        # Save final models
-        _save_pkl(self.logistic_regression, _LR_PATH)
-        _save_pkl(self.naive_bayes,         _NB_PATH)
-
-        present_labels = [
-            l for l in ["Positive", "Negative", "Neutral"]
-            if l in y
-        ]
+        present_labels = [l for l in ["Positive", "Negative", "Neutral"] if l in y]
 
         self.evaluation_results = {
             "logistic_regression": {
@@ -347,16 +362,17 @@ class SentimentModels:
                 **_cv_metrics(nb_fold_acc, nb_fold_f1),
                 **_held_out_metrics(y_te, nb_held_pred, present_labels),
             },
-            "train_size":  len(y),
-            "test_size":   len(y_te),
-            "n_folds":     n_folds,
+            "train_size": len(y),
+            "test_size":  len(y_te),
+            "n_folds":    n_folds,
         }
 
         self.is_trained = True
         logger.info(
-            "Models trained. LR 5-fold acc=%.1f±%.1f%% | NB 5-fold acc=%.1f±%.1f%%",
-            np.mean(lr_fold_acc)*100, np.std(lr_fold_acc)*100,
-            np.mean(nb_fold_acc)*100, np.std(nb_fold_acc)*100,
+            "Models trained (leak-free Pipeline CV). "
+            "LR %d-fold acc=%.1f±%.1f%% | NB %d-fold acc=%.1f±%.1f%%",
+            n_folds, np.mean(lr_fold_acc)*100, np.std(lr_fold_acc)*100,
+            n_folds, np.mean(nb_fold_acc)*100, np.std(nb_fold_acc)*100,
         )
 
     def predict(self, texts):
@@ -414,6 +430,21 @@ def _cv_metrics(fold_acc, fold_f1):
     }
 
 
+def _per_class(y_true, y_pred, labels):
+    """Calculate precision, recall, and f1 per class."""
+    report = {}
+    for lbl in labels:
+        binary_true = [1 if y == lbl else 0 for y in y_true]
+        binary_pred = [1 if y == lbl else 0 for y in y_pred]
+        report[lbl] = {
+            "precision": round(precision_score(binary_true, binary_pred, zero_division=0) * 100, 2),
+            "recall":    round(recall_score   (binary_true, binary_pred, zero_division=0) * 100, 2),
+            "f1":        round(f1_score       (binary_true, binary_pred, zero_division=0) * 100, 2),
+            "support":   int(sum(binary_true)),
+        }
+    return report
+
+
 def _held_out_metrics(y_true, y_pred, labels):
     """Single held-out split metrics for the confusion matrix display."""
     try:
@@ -425,11 +456,12 @@ def _held_out_metrics(y_true, y_pred, labels):
             "macro_f1":         round(f1_score       (y_true, y_pred, average="macro",    labels=labels, zero_division=0) * 100, 2),
             "confusion_matrix": confusion_matrix(y_true, y_pred, labels=labels).tolist(),
             "labels":           labels,
+            "per_class":        _per_class(y_true, y_pred, labels),
         }
     except Exception:
         return {
             "accuracy": 0, "precision": 0, "recall": 0, "f1_score": 0, "macro_f1": 0,
-            "confusion_matrix": [], "labels": [],
+            "confusion_matrix": [], "labels": [], "per_class": {},
         }
 
 
@@ -482,11 +514,11 @@ def _ensure_models_loaded():
     # 91%+ accuracy on a held-out test set (5-fold CV: 91.1±1.7% LR,
     # 92.9±2.4% NB).
     #
-    # NOTE on domain gap: ~30-40% of live YouTube comments will have zero
-    # TF-IDF feature overlap with this vocabulary. Those are flagged as
-    # "Low confidence" and deferred to RoBERTa (which handles in-domain
-    # YouTube text natively via its Twitter pre-training).
-    # This is an honest limitation and is documented in the README.
+    # NOTE on domain gap: ~28% of live YouTube comments are flagged as
+    # "Low confidence" (zero TF-IDF feature overlap with training vocabulary).
+    # Those comments are deferred to RoBERTa, which handles in-domain
+    # YouTube text natively via its Twitter pre-training.
+    # This limitation is documented in the README.
     logger.info("Training models on curated dataset (%d samples)…", len(TRAINING_DATA))
 
     raw_texts   = [t for t, _ in TRAINING_DATA]
@@ -541,7 +573,7 @@ def _predict_batch(cleaned_texts):
 
 def _ensemble_vote(vader, lr, nb, roberta):
     """
-    Majority vote among VADER, LR, and RoBERTa.
+    Majority vote among VADER, LR, NB, and RoBERTa (four voters).
     RoBERTa breaks ties (it has the highest real-world accuracy on
     social-media text per TweetEval benchmarks).
 
