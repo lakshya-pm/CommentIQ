@@ -9,8 +9,8 @@
 
 | | Before | After |
 |--|--------|-------|
-| **Tests** | 0 | 51 passing |
-| **CV Evaluation** | Single 93-sample split | 5-fold stratified CV |
+| **Tests** | 0 | **64 passing** |
+| **CV Evaluation** | Single 93-sample split | 5-fold Pipeline CV (leak-free) |
 | **Model loading** | Retrained on every request | Cached `.pkl` at startup |
 | **Negation handling** | `"not good"` → `"good"` ❌ | `"not good"` preserved ✅ |
 | **Low-confidence** | LR/NB silently guessed | Flagged, deferred to RoBERTa |
@@ -59,7 +59,7 @@
 | Feature | Detail |
 |---------|--------|
 | **Model caching** | `_ensure_models_loaded()` trains once at Flask startup and saves to `downloads/models/*.pkl`. Subsequent requests load from `.pkl` in milliseconds. |
-| **5-fold stratified CV** | `SentimentModels.train()` now uses `StratifiedKFold(n_splits=5)`. Reports mean ± SD instead of single-split accuracy. n_folds is adaptive (falls back if class size < 5). |
+| **5-fold Pipeline CV** | `SentimentModels.train()` uses `sklearn.pipeline.Pipeline` wrapping TF-IDF + classifier, so the vectorizer is fitted **only on each fold's training text**. Reports mean ± SD. n_folds is adaptive (falls back if class size < 5). |
 | **Low-confidence flag** | After TF-IDF transform, rows with zero non-zero features (`X.indptr` diff = 0) are labelled `"Low confidence"` instead of a random class prediction. |
 | **Ensemble vote** | `_ensemble_vote()` takes VADER + LR + NB + RoBERTa; majority wins; RoBERTa breaks 2-way ties. Exposed as the `"ensemble"` column in the results DataFrame. |
 | **Bigram TF-IDF** | Changed from unigrams only to `ngram_range=(1,2)` — captures `"not good"`, `"very bad"` as features. |
@@ -79,7 +79,7 @@
 
 **Problem:** Docstring claimed 58M tweets for pre-training corpus — the correct figure is ~124M tweets (TimeLMs project).
 
-**Change:** Updated corpus size and added correct citation — Loureiro et al. 2022, ACL Findings.
+**Change:** Updated corpus size and added correct citation — Loureiro et al. 2022, ACL 2022 **System Demonstrations** track.
 
 ---
 
@@ -114,14 +114,7 @@
 
 ### `config.py` — Feature Flags
 
-**Added:**
-```python
-USE_LORA_ADAPTER = os.getenv("USE_LORA_ADAPTER", "false").lower() == "true"
-DEMO_MODE        = os.getenv("DEMO_MODE",        "false").lower() == "true"
-```
-
-- `USE_LORA_ADAPTER=true` → loads LoRA fine-tuned adapter instead of base RoBERTa (requires running `scripts/finetune_lora.py` first)
-- `DEMO_MODE=true` → loads bundled sample result without API calls (useful for live demos with no internet)
+- `USE_LORA_ADAPTER` and `DEMO_MODE` are defined but **not yet wired into the app** (documented as future work). Scripts for both exist in `scripts/`.
 
 ---
 
@@ -179,9 +172,7 @@ Optional LoRA fine-tuning of the cardiffnlp RoBERTa model.
 ### `scripts/integrate_kaggle.py`
 Investigated the [Kaggle YouTube Comments dataset](https://www.kaggle.com/datasets/amaanpoonawala/youtube-comments-sentiment-dataset) (1M+ comments).
 
-**Finding:** Dataset has ~20% label noise (comments containing "hate" are labeled Positive 27% of the time). Mixing with our curated data dropped accuracy from **91% → 60%**. Dataset was shelved — the 462-sample curated set remains the training source.
-
-The script remains in the repo as documentation of the experiment.
+**Finding:** Dataset has label noise — the label quality is inconsistent across Positive/Negative/Neutral classes. Mixing with our curated data dropped accuracy from **~91% → ~60%**. Dataset was shelved — the 462-sample curated set remains the training source. The script remains in the repo as documentation of the experiment.
 
 ---
 
