@@ -32,7 +32,7 @@ import string
 import nltk
 
 from nltk.tokenize import word_tokenize
-from nltk.corpus import stopwords
+from nltk.corpus import stopwords, wordnet
 from nltk.stem import WordNetLemmatizer
 
 
@@ -46,6 +46,8 @@ _nltk_resources = {
     "corpora/stopwords":    "stopwords",
     "corpora/wordnet":      "wordnet",
     "corpora/omw-1.4":      "omw-1.4",
+    "taggers/averaged_perceptron_tagger":     "averaged_perceptron_tagger",
+    "taggers/averaged_perceptron_tagger_eng": "averaged_perceptron_tagger_eng",
 }
 
 for find_path, pkg in _nltk_resources.items():
@@ -251,20 +253,68 @@ def remove_stopwords(tokens):
 
 
 # ---------------------------------------------------
-# Lemmatize Tokens
+# POS tag → WordNet POS mapper
+# ---------------------------------------------------
+
+def _wordnet_pos(treebank_tag: str) -> str:
+    """
+    Map a Penn Treebank POS tag to a WordNet POS constant.
+
+    Penn tag prefixes:
+        J → adjective  (JJ, JJR, JJS)
+        V → verb       (VB, VBD, VBG, VBN, VBP, VBZ)
+        R → adverb     (RB, RBR, RBS)
+        N → noun       (NN, NNS, NNP …)  — default
+
+    Examples:
+        'VBG' → wordnet.VERB   (working → work)
+        'JJR' → wordnet.ADJ    (better  → good)
+        'RB'  → wordnet.ADV    (quickly → quickly)
+        'NN'  → wordnet.NOUN   (cats    → cat)
+    """
+    if treebank_tag.startswith("J"):
+        return wordnet.ADJ
+    elif treebank_tag.startswith("V"):
+        return wordnet.VERB
+    elif treebank_tag.startswith("R"):
+        return wordnet.ADV
+    else:
+        return wordnet.NOUN  # safe default
+
+
+# ---------------------------------------------------
+# Lemmatize Tokens  (POS-aware)
 # ---------------------------------------------------
 
 def lemmatize(tokens):
     """
-    Reduce words to their base/dictionary form.
+    Reduce words to their base/dictionary form using POS-aware lemmatization.
+
+    NLTK's default `lemmatize(word)` assumes noun POS, so verbs like
+    'working' stay unchanged.  By first POS-tagging the token list and
+    mapping Penn Treebank tags to WordNet POS, we get correct forms:
 
     Examples:
-        running → run
-        better  → better   (adjectives unchanged)
-        cats    → cat
-        not     → not      (negation words unchanged)
+        working → work    (VBG → verb)
+        running → run     (VBG → verb)
+        better  → good    (JJR → adjective)
+        cats    → cat     (NNS → noun)
+        not     → not     (RB  → adverb, then lemmatized — unchanged)
     """
-    return [lemmatizer.lemmatize(token) for token in tokens]
+    if not tokens:
+        return []
+
+    # POS-tag the whole list at once (more accurate than word-by-word)
+    try:
+        tagged = nltk.pos_tag(tokens)
+    except Exception:
+        # Fallback: noun default if tagger unavailable
+        return [lemmatizer.lemmatize(token) for token in tokens]
+
+    return [
+        lemmatizer.lemmatize(word, pos=_wordnet_pos(tag))
+        for word, tag in tagged
+    ]
 
 
 # ---------------------------------------------------
