@@ -40,7 +40,7 @@
                 <a href="/" class="nav-link" id="navHome">
                     <i class="fa-solid fa-arrow-left"></i> New Analysis
                 </a>
-                <a href="/download" class="nav-link" id="navDownload" style="background: rgba(99,102,241,0.08); color: #6366f1 !important; font-weight: 600;">
+                <a href="/download?id={{ result_id }}" class="nav-link" id="navDownload" style="background: rgba(99,102,241,0.08); color: #6366f1 !important; font-weight: 600;">
                     <i class="fa-solid fa-download"></i> CSV
                 </a>
             </div>
@@ -459,7 +459,7 @@
 
             <div class="action-bar animate-fadeInUp" id="actionBar">
 
-                <a href="/download" class="action-btn primary" id="downloadBtn">
+                <a href="/download?id={{ result_id }}" class="action-btn primary" id="downloadBtn">
                     <i class="fa-solid fa-download"></i>
                     Download CSV Report
                 </a>
