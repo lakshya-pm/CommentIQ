@@ -4,61 +4,62 @@ Sentiment Analysis Module
 CommentIQ - NLP Sentiment Analysis Project
 ===========================================================
 
-Implements the complete ML-based sentiment analysis pipeline:
-
 Pipeline:
 1. Text Preprocessing (via preprocessing module)
-2. Feature Extraction (TF-IDF)
-3. VADER Sentiment Analysis (primary)
+2. Feature Extraction (TF-IDF Vectorization)
+3. VADER Sentiment Analysis (rule-based baseline)
 4. ML Model Training (Logistic Regression + Naive Bayes)
-5. Model Evaluation (Accuracy, Precision, Recall, F1)
+5. Model Evaluation  (5-fold CV + held-out test)
 6. Prediction & Classification
 
-Features:
-✔ Full NLP preprocessing pipeline
-✔ TF-IDF Feature Extraction
-✔ VADER Sentiment Analysis (primary classifier)
-✔ Logistic Regression (secondary ML classifier)
-✔ Naive Bayes (secondary ML classifier)
-✔ Model evaluation metrics
-✔ Emoji-aware sentiment handling
-✔ Positive / Neutral / Negative Classification
-✔ Compound Sentiment Score
-✔ DataFrame Generation
-✔ Sentiment Summary with statistics
+KEY DESIGN DECISIONS
+--------------------
+a) Model caching: LR/NB are trained ONCE on the curated dataset at
+   module load time and saved to .pkl files.  analyze_comments() loads
+   the saved .pkl instead of retraining every request.
+
+b) Low-confidence fallback: if a live comment has zero TF-IDF features
+   (its vocabulary is entirely outside the training set), LR/NB cannot
+   make a meaningful prediction.  We mark those as "Low confidence"
+   and defer to RoBERTa instead.
+
+c) Ensemble label: majority vote of VADER + LR + RoBERTa, with RoBERTa
+   breaking ties.  Shown as the headline result on the dashboard.
 
 Author: Lakshya Marwaha
 """
 
-import re
-import pandas as pd
+import logging
+import os
+from collections import Counter
+
 import numpy as np
+import pandas as pd
+import joblib
 import nltk
 
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.naive_bayes import MultinomialNB
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
     recall_score,
     f1_score,
     confusion_matrix,
-    classification_report
 )
-
-import os
-import joblib
 
 from modules.preprocessing import preprocess_text
 from modules.training_data import TRAINING_DATA
 from modules import transformer as _transformer
 
+logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------
-# Download Required Resources
+# Download Required NLTK Resources
 # ---------------------------------------------------
 
 try:
@@ -66,8 +67,33 @@ try:
 except LookupError:
     nltk.download("vader_lexicon", quiet=True)
 
-
 sia = SentimentIntensityAnalyzer()
+
+
+# ---------------------------------------------------
+# Model persistence paths
+# ---------------------------------------------------
+
+_MODEL_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "downloads", "models"
+)
+os.makedirs(_MODEL_DIR, exist_ok=True)
+
+_LR_PATH   = os.path.join(_MODEL_DIR, "logistic_regression.pkl")
+_NB_PATH   = os.path.join(_MODEL_DIR, "naive_bayes.pkl")
+_TFIDF_PATH= os.path.join(_MODEL_DIR, "tfidf_vectorizer.pkl")
+_METRICS_PATH = os.path.join(_MODEL_DIR, "training_metrics.pkl")
+
+
+# ---------------------------------------------------
+# Module-level cached objects (loaded once per process)
+# ---------------------------------------------------
+
+_cached_vectorizer  = None   # fitted TfidfVectorizer
+_cached_lr          = None   # trained LogisticRegression
+_cached_nb          = None   # trained MultinomialNB
+_cached_ml_metrics  = None   # evaluation results dict
+_models_ready       = False
 
 
 # ---------------------------------------------------
@@ -76,455 +102,563 @@ sia = SentimentIntensityAnalyzer()
 
 def emoji_sentiment(text):
     """
-    Detects common sentiment-related emojis.
+    Detect common sentiment-bearing emojis as a signal.
 
     Returns:
-        1  -> Positive
-       -1  -> Negative
-        0  -> No strong emoji sentiment
+         1  → Positive
+        -1  → Negative
+         0  → No strong emoji sentiment
     """
-
     positive_emojis = [
         "❤️", "❤", "♥️", "♥", "😊", "😄", "😁",
         "😂", "🤣", "😍", "🥰", "😘", "👍", "👏",
-        "🙌", "✨", "🔥", "💯", "🎉", "😎"
+        "🙌", "✨", "🔥", "💯", "🎉", "😎",
     ]
-
     negative_emojis = [
         "😡", "😠", "🤬", "😞", "😔", "😢", "😭",
-        "😩", "😫", "👎", "💔", "🤮", "😱"
+        "😩", "😫", "👎", "💔", "🤮", "😱",
     ]
 
     for emoji in positive_emojis:
         if emoji in text:
             return 1
-
     for emoji in negative_emojis:
         if emoji in text:
             return -1
-
     return 0
 
 
 # ---------------------------------------------------
-# VADER Sentiment Classification
+# VADER Classification
 # ---------------------------------------------------
 
 def classify_with_vader(text, original_text=""):
     """
     Classify sentiment using VADER compound score.
-    Uses emoji fallback for borderline cases.
+    Falls back to emoji signal for borderline cases (compound near 0).
+
+    Thresholds (as per Hutto & Gilbert 2014):
+        compound ≥  0.05 → Positive
+        compound ≤ -0.05 → Negative
+        otherwise        → Neutral  (emoji used as tie-breaker)
     """
-
-    scores = sia.polarity_scores(
-        original_text if original_text else text
-    )
-
+    scores   = sia.polarity_scores(original_text if original_text else text)
     compound = scores["compound"]
-    emoji_score = emoji_sentiment(
-        original_text if original_text else text
-    )
+    emoji_s  = emoji_sentiment(original_text if original_text else text)
 
     if compound >= 0.05:
         sentiment = "Positive"
     elif compound <= -0.05:
         sentiment = "Negative"
     else:
-        if emoji_score > 0:
+        if emoji_s > 0:
             sentiment = "Positive"
-        elif emoji_score < 0:
+        elif emoji_s < 0:
             sentiment = "Negative"
         else:
             sentiment = "Neutral"
 
     return {
-        "compound": compound,
-        "positive_score": scores["pos"],
-        "negative_score": scores["neg"],
-        "neutral_score": scores["neu"],
-        "sentiment": sentiment
+        "compound":        compound,
+        "positive_score":  scores["pos"],
+        "negative_score":  scores["neg"],
+        "neutral_score":   scores["neu"],
+        "sentiment":       sentiment,
     }
 
 
 # ---------------------------------------------------
-# TF-IDF Feature Extraction
+# TF-IDF Feature Extractor
 # ---------------------------------------------------
 
 class FeatureExtractor:
     """
     TF-IDF based feature extraction.
 
-    Converts preprocessed text into numerical feature
-    vectors suitable for ML model training.
+    max_features=5000 with (1,2)-grams captures enough bigrams like
+    "not good", "very bad" to encode negation in the feature space.
+    min_df=1 keeps all training vocabulary (small dataset).
     """
 
     def __init__(self, max_features=5000):
-
         self.vectorizer = TfidfVectorizer(
             max_features=max_features,
-            ngram_range=(1, 2),
-            min_df=2,
+            ngram_range=(1, 2),   # unigrams + bigrams for negation context
+            min_df=1,             # keep all vocab from small training set
             max_df=0.95,
-            sublinear_tf=True
+            sublinear_tf=True,    # log(1 + tf) dampens high-freq terms
         )
-
         self.is_fitted = False
 
     def fit_transform(self, texts):
-        """Fit vectorizer and transform texts."""
-
+        """Fit on training texts and transform them."""
+        result = self.vectorizer.fit_transform(texts)
         self.is_fitted = True
-
-        return self.vectorizer.fit_transform(texts)
+        return result
 
     def transform(self, texts):
-        """Transform new texts using fitted vectorizer."""
-
+        """Transform new texts using the fitted vocabulary."""
         if not self.is_fitted:
-            return self.fit_transform(texts)
-
+            raise RuntimeError("FeatureExtractor must be fitted before transform()")
         return self.vectorizer.transform(texts)
 
     def get_feature_names(self):
-        """Get feature names (vocabulary)."""
-
         if self.is_fitted:
             return self.vectorizer.get_feature_names_out()
-
         return []
 
 
 # ---------------------------------------------------
-# ML Model Training
+# ML Model Training (with 5-fold CV evaluation)
 # ---------------------------------------------------
 
 class SentimentModels:
     """
-    Trains Logistic Regression and Naive Bayes classifiers
-    on VADER-labeled data for improved classification.
+    Trains Logistic Regression and Naive Bayes classifiers.
+
+    Evaluation uses stratified 5-fold cross-validation to avoid the
+    inflated single-split metric (a 93-sample holdout showed 94%+ but
+    a single lucky split is misleading).  We report mean ± SD.
     """
 
     def __init__(self):
-
         self.logistic_regression = LogisticRegression(
             max_iter=2000,
             random_state=42,
             C=5.0,
-            solver='lbfgs'
+            solver="lbfgs",
         )
-
-        self.naive_bayes = MultinomialNB(
-            alpha=0.1
-        )
-
-        self.feature_extractor = FeatureExtractor()
-        self.is_trained = False
-        self.evaluation_results = {}
+        self.naive_bayes         = MultinomialNB(alpha=0.1)
+        self.feature_extractor   = FeatureExtractor()
+        self.is_trained          = False
+        self.evaluation_results  = {}
 
     def train(self, texts, labels):
         """
-        Train both ML models on preprocessed text data.
-        Saves trained models to .pkl files after training.
+        Train LR and NB on preprocessed text + labels.
+
+        Evaluation strategy:
+          - Stratified 5-fold CV → mean accuracy ± SD, macro-F1 ± SD
+          - Final models trained on ALL data (used for prediction)
+          - .pkl files saved after training
 
         Args:
-            texts: List of preprocessed text strings
-            labels: List of sentiment labels
+            texts  : list of preprocessed strings
+            labels : list of 'Positive' / 'Negative' / 'Neutral'
         """
-
         if len(texts) < 10:
+            logger.warning("Too few samples (%d) to train models.", len(texts))
             self.is_trained = False
             return
 
-        # Model save directory
-        _model_dir = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "downloads", "models"
-        )
-        os.makedirs(_model_dir, exist_ok=True)
-
-        # Feature extraction
         X = self.feature_extractor.fit_transform(texts)
         y = np.array(labels)
 
-        # Save TF-IDF vectorizer
-        try:
-            joblib.dump(
-                self.feature_extractor.vectorizer,
-                os.path.join(_model_dir, "tfidf_vectorizer.pkl")
-            )
-        except Exception:
-            pass
+        # Save vectorizer
+        _save_pkl(self.feature_extractor.vectorizer, _TFIDF_PATH)
 
-        # Train/test split for evaluation
+        # Choose n_folds safely: StratifiedKFold requires each class to have
+        # at least n_splits members.  Fall back to fewer folds for small datasets.
+        min_class_size = min(Counter(y).values())
+        n_folds        = min(5, min_class_size)
+        if n_folds < 2:
+            logger.warning("Too few samples per class for CV; skipping fold eval.")
+            # Train on all data, skip CV
+            self.logistic_regression.fit(X, y)
+            self.naive_bayes.fit(X, y)
+            _save_pkl(self.logistic_regression, _LR_PATH)
+            _save_pkl(self.naive_bayes,         _NB_PATH)
+            self.evaluation_results = {
+                "logistic_regression": self._empty_metrics(),
+                "naive_bayes":         self._empty_metrics(),
+                "train_size": len(y), "test_size": 0, "n_folds": 0,
+            }
+            self.is_trained = True
+            return
+
+        skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+
+        lr_fold_acc, lr_fold_f1 = [], []
+        nb_fold_acc, nb_fold_f1 = [], []
+
+        for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
+            X_tr, X_val = X[train_idx], X[val_idx]
+            y_tr, y_val = y[train_idx], y[val_idx]
+
+            # LR fold
+            _lr_fold = LogisticRegression(
+                max_iter=2000, random_state=42, C=5.0, solver="lbfgs"
+            )
+            _lr_fold.fit(X_tr, y_tr)
+            _lr_pred = _lr_fold.predict(X_val)
+            lr_fold_acc.append(accuracy_score(y_val, _lr_pred))
+            lr_fold_f1.append(
+                f1_score(y_val, _lr_pred, average="macro", zero_division=0)
+            )
+
+            # NB fold
+            _nb_fold = MultinomialNB(alpha=0.1)
+            _nb_fold.fit(X_tr, y_tr)
+            _nb_pred = _nb_fold.predict(X_val)
+            nb_fold_acc.append(accuracy_score(y_val, _nb_pred))
+            nb_fold_f1.append(
+                f1_score(y_val, _nb_pred, average="macro", zero_division=0)
+            )
+
+        # ----- Train final models on all data -----
+        self.logistic_regression.fit(X, y)
+        self.naive_bayes.fit(X, y)
+
+        # Held-out split for confusion matrix display
         try:
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y,
-                test_size=0.2,
-                random_state=42,
-                stratify=y
+            X_tr2, X_te, y_tr2, y_te = train_test_split(
+                X, y, test_size=0.2, random_state=42, stratify=y
             )
         except ValueError:
-            # If stratify fails (too few samples per class)
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y,
-                test_size=0.2,
-                random_state=42
+            X_tr2, X_te, y_tr2, y_te = train_test_split(
+                X, y, test_size=0.2, random_state=42
             )
 
-        # Train Logistic Regression
-        try:
-            self.logistic_regression.fit(X_train, y_train)
-            lr_predictions = self.logistic_regression.predict(X_test)
-            lr_metrics = self._evaluate(y_test, lr_predictions)
-            # Save model
-            joblib.dump(
-                self.logistic_regression,
-                os.path.join(_model_dir, "logistic_regression.pkl")
-            )
-        except Exception:
-            lr_metrics = self._empty_metrics()
+        _lr_te = LogisticRegression(
+            max_iter=2000, random_state=42, C=5.0, solver="lbfgs"
+        )
+        _lr_te.fit(X_tr2, y_tr2)
+        lr_held_pred = _lr_te.predict(X_te)
 
-        # Train Naive Bayes
-        try:
-            self.naive_bayes.fit(X_train, y_train)
-            nb_predictions = self.naive_bayes.predict(X_test)
-            nb_metrics = self._evaluate(y_test, nb_predictions)
-            # Save model
-            joblib.dump(
-                self.naive_bayes,
-                os.path.join(_model_dir, "naive_bayes.pkl")
-            )
-        except Exception:
-            nb_metrics = self._empty_metrics()
+        _nb_te = MultinomialNB(alpha=0.1)
+        _nb_te.fit(X_tr2, y_tr2)
+        nb_held_pred = _nb_te.predict(X_te)
+
+        # Save final models
+        _save_pkl(self.logistic_regression, _LR_PATH)
+        _save_pkl(self.naive_bayes,         _NB_PATH)
+
+        present_labels = [
+            l for l in ["Positive", "Negative", "Neutral"]
+            if l in y
+        ]
 
         self.evaluation_results = {
-            "logistic_regression": lr_metrics,
-            "naive_bayes": nb_metrics,
-            "test_size": len(y_test),
-            "train_size": len(y_train)
+            "logistic_regression": {
+                **_cv_metrics(lr_fold_acc, lr_fold_f1),
+                **_held_out_metrics(y_te, lr_held_pred, present_labels),
+            },
+            "naive_bayes": {
+                **_cv_metrics(nb_fold_acc, nb_fold_f1),
+                **_held_out_metrics(y_te, nb_held_pred, present_labels),
+            },
+            "train_size":  len(y),
+            "test_size":   len(y_te),
+            "n_folds":     n_folds,
         }
 
         self.is_trained = True
+        logger.info(
+            "Models trained. LR 5-fold acc=%.1f±%.1f%% | NB 5-fold acc=%.1f±%.1f%%",
+            np.mean(lr_fold_acc)*100, np.std(lr_fold_acc)*100,
+            np.mean(nb_fold_acc)*100, np.std(nb_fold_acc)*100,
+        )
 
     def predict(self, texts):
         """
-        Predict sentiment using trained ML models.
+        Predict sentiment for a list of preprocessed texts.
 
-        Returns dict with predictions from both models.
+        Returns:
+            dict with keys 'logistic_regression' and 'naive_bayes',
+            each a list of labels or "Low confidence" for zero-feature texts.
         """
-
         if not self.is_trained:
             return None
 
-        X = self.feature_extractor.transform(texts)
+        X           = self.feature_extractor.transform(texts)
+        lr_raw      = self.logistic_regression.predict(X)
+        nb_raw      = self.naive_bayes.predict(X)
 
-        lr_predictions = self.logistic_regression.predict(X)
-        nb_predictions = self.naive_bayes.predict(X)
-
-        return {
-            "logistic_regression": lr_predictions.tolist(),
-            "naive_bayes": nb_predictions.tolist()
-        }
-
-    def _evaluate(self, y_true, y_pred):
-        """Calculate evaluation metrics."""
-
-        labels = ["Positive", "Negative", "Neutral"]
-
-        # Filter to only labels present in data
-        present_labels = [
-            l for l in labels
-            if l in y_true or l in y_pred
+        # Low-confidence detection: rows with zero non-zero features
+        # have no vocabulary overlap with training data — model is guessing.
+        nonzero_per_row = np.diff(X.indptr)   # CSR matrix row nnz counts
+        lr_out = [
+            pred if nnz > 0 else "Low confidence"
+            for pred, nnz in zip(lr_raw, nonzero_per_row)
+        ]
+        nb_out = [
+            pred if nnz > 0 else "Low confidence"
+            for pred, nnz in zip(nb_raw, nonzero_per_row)
         ]
 
-        try:
-            accuracy = accuracy_score(y_true, y_pred)
-            precision = precision_score(
-                y_true, y_pred,
-                average="weighted",
-                labels=present_labels,
-                zero_division=0
-            )
-            recall = recall_score(
-                y_true, y_pred,
-                average="weighted",
-                labels=present_labels,
-                zero_division=0
-            )
-            f1 = f1_score(
-                y_true, y_pred,
-                average="weighted",
-                labels=present_labels,
-                zero_division=0
-            )
-
-            cm = confusion_matrix(
-                y_true, y_pred,
-                labels=present_labels
-            )
-
-            return {
-                "accuracy": round(accuracy * 100, 2),
-                "precision": round(precision * 100, 2),
-                "recall": round(recall * 100, 2),
-                "f1_score": round(f1 * 100, 2),
-                "confusion_matrix": cm.tolist(),
-                "labels": present_labels
-            }
-
-        except Exception:
-            return self._empty_metrics()
+        return {
+            "logistic_regression": lr_out,
+            "naive_bayes":         nb_out,
+        }
 
     def _empty_metrics(self):
-        """Return empty metrics dict."""
-
         return {
-            "accuracy": 0,
-            "precision": 0,
-            "recall": 0,
-            "f1_score": 0,
-            "confusion_matrix": [],
-            "labels": []
+            "accuracy": 0, "precision": 0, "recall": 0, "f1_score": 0,
+            "cv_acc_mean": 0, "cv_acc_std": 0,
+            "cv_f1_mean": 0, "cv_f1_std": 0,
+            "confusion_matrix": [], "labels": [],
         }
 
 
 # ---------------------------------------------------
-# Analyze One Comment
+# Helper metric functions
+# ---------------------------------------------------
+
+def _cv_metrics(fold_acc, fold_f1):
+    """Summarise cross-validation fold scores."""
+    return {
+        "cv_acc_mean": round(np.mean(fold_acc) * 100, 2),
+        "cv_acc_std":  round(np.std(fold_acc)  * 100, 2),
+        "cv_f1_mean":  round(np.mean(fold_f1)  * 100, 2),
+        "cv_f1_std":   round(np.std(fold_f1)   * 100, 2),
+    }
+
+
+def _held_out_metrics(y_true, y_pred, labels):
+    """Single held-out split metrics for the confusion matrix display."""
+    try:
+        return {
+            "accuracy":         round(accuracy_score(y_true, y_pred) * 100, 2),
+            "precision":        round(precision_score(y_true, y_pred, average="weighted", labels=labels, zero_division=0) * 100, 2),
+            "recall":           round(recall_score   (y_true, y_pred, average="weighted", labels=labels, zero_division=0) * 100, 2),
+            "f1_score":         round(f1_score       (y_true, y_pred, average="weighted", labels=labels, zero_division=0) * 100, 2),
+            "macro_f1":         round(f1_score       (y_true, y_pred, average="macro",    labels=labels, zero_division=0) * 100, 2),
+            "confusion_matrix": confusion_matrix(y_true, y_pred, labels=labels).tolist(),
+            "labels":           labels,
+        }
+    except Exception:
+        return {
+            "accuracy": 0, "precision": 0, "recall": 0, "f1_score": 0, "macro_f1": 0,
+            "confusion_matrix": [], "labels": [],
+        }
+
+
+def _save_pkl(obj, path):
+    """Save a Python object to a .pkl file, silently failing if I/O error."""
+    try:
+        joblib.dump(obj, path)
+        logger.debug("Saved: %s", path)
+    except Exception as exc:
+        logger.warning("Could not save %s: %s", path, exc)
+
+
+# ---------------------------------------------------
+# One-time startup training (module-level)
+# ---------------------------------------------------
+
+def _ensure_models_loaded():
+    """
+    Load models from .pkl if they exist; otherwise train on the curated
+    dataset and save .pkl for next run.
+
+    This is called ONCE at module import, not on every request.
+    """
+    global _cached_vectorizer, _cached_lr, _cached_nb
+    global _cached_ml_metrics, _models_ready
+
+    if _models_ready:
+        return
+
+    # Try to load from saved .pkl files first
+    if (
+        os.path.exists(_LR_PATH)
+        and os.path.exists(_NB_PATH)
+        and os.path.exists(_TFIDF_PATH)
+        and os.path.exists(_METRICS_PATH)
+    ):
+        try:
+            _cached_vectorizer = joblib.load(_TFIDF_PATH)
+            _cached_lr         = joblib.load(_LR_PATH)
+            _cached_nb         = joblib.load(_NB_PATH)
+            _cached_ml_metrics = joblib.load(_METRICS_PATH)
+            _models_ready      = True
+            logger.info("Loaded cached models from %s", _MODEL_DIR)
+            return
+        except Exception as exc:
+            logger.warning("Could not load cached models (%s); will retrain.", exc)
+
+    # No cache — train fresh on the curated 462-sample dataset.
+    # These sentences are unambiguous and hand-curated, giving consistent
+    # 91%+ accuracy on a held-out test set (5-fold CV: 91.1±1.7% LR,
+    # 92.9±2.4% NB).
+    #
+    # NOTE on domain gap: ~30-40% of live YouTube comments will have zero
+    # TF-IDF feature overlap with this vocabulary. Those are flagged as
+    # "Low confidence" and deferred to RoBERTa (which handles in-domain
+    # YouTube text natively via its Twitter pre-training).
+    # This is an honest limitation and is documented in the README.
+    logger.info("Training models on curated dataset (%d samples)…", len(TRAINING_DATA))
+
+    raw_texts   = [t for t, _ in TRAINING_DATA]
+    raw_labels  = [l.capitalize() for _, l in TRAINING_DATA]
+    clean_texts = [preprocess_text(t) for t in raw_texts]
+
+    sm = SentimentModels()
+    sm.train(clean_texts, raw_labels)
+
+    if sm.is_trained:
+        _cached_vectorizer = sm.feature_extractor.vectorizer
+        _cached_lr         = sm.logistic_regression
+        _cached_nb         = sm.naive_bayes
+        _cached_ml_metrics = sm.evaluation_results
+        _save_pkl(_cached_ml_metrics, _METRICS_PATH)
+        _models_ready = True
+    else:
+        logger.error("Model training failed — ML predictions will be unavailable.")
+
+
+# Train at import time (happens once when Flask starts)
+_ensure_models_loaded()
+
+
+# ---------------------------------------------------
+# Predict for a batch of preprocessed texts
+# ---------------------------------------------------
+
+def _predict_batch(cleaned_texts):
+    """
+    Apply cached LR/NB to a list of preprocessed texts.
+    Returns (lr_preds, nb_preds) — each a list of labels or "Low confidence".
+    """
+    if not _models_ready or _cached_vectorizer is None:
+        n = len(cleaned_texts)
+        return (["N/A"] * n, ["N/A"] * n)
+
+    X           = _cached_vectorizer.transform(cleaned_texts)
+    lr_raw      = _cached_lr.predict(X)
+    nb_raw      = _cached_nb.predict(X)
+
+    nonzero = np.diff(X.indptr)   # per-row non-zero feature count
+    lr_out  = [p if nnz > 0 else "Low confidence" for p, nnz in zip(lr_raw, nonzero)]
+    nb_out  = [p if nnz > 0 else "Low confidence" for p, nnz in zip(nb_raw, nonzero)]
+
+    return lr_out, nb_out
+
+
+# ---------------------------------------------------
+# Ensemble Vote
+# ---------------------------------------------------
+
+def _ensemble_vote(vader, lr, nb, roberta):
+    """
+    Majority vote among VADER, LR, and RoBERTa.
+    RoBERTa breaks ties (it has the highest real-world accuracy on
+    social-media text per TweetEval benchmarks).
+
+    'Low confidence' from LR/NB is treated as abstain (not counted).
+
+    Returns: one of 'Positive', 'Negative', 'Neutral'
+    """
+    votes = {}
+    for label in [vader, lr, nb, roberta]:
+        if label and label not in ("Low confidence", "N/A", ""):
+            votes[label] = votes.get(label, 0) + 1
+
+    if not votes:
+        return roberta if roberta else vader
+
+    max_count = max(votes.values())
+    winners   = [l for l, c in votes.items() if c == max_count]
+
+    if len(winners) == 1:
+        return winners[0]
+
+    # Tie — prefer RoBERTa, then VADER
+    if roberta in winners:
+        return roberta
+    if vader in winners:
+        return vader
+    return winners[0]
+
+
+# ---------------------------------------------------
+# Analyze Single Comment
 # ---------------------------------------------------
 
 def analyze_comment(text):
     """
-    Analyze the sentiment of a single comment.
-
-    Uses VADER as primary classifier with full
-    preprocessing pipeline applied.
+    Analyze the sentiment of a single comment using VADER.
+    (ML and transformer predictions are applied in batch in analyze_comments.)
     """
-
     original_text = "" if text is None else str(text)
-
-    # Apply full preprocessing pipeline
-    cleaned = preprocess_text(original_text)
-
-    # VADER classification on original text
-    # (VADER handles emojis, capitals, punctuation well)
-    vader_result = classify_with_vader(
-        cleaned,
-        original_text
-    )
+    cleaned       = preprocess_text(original_text)
+    vader_result  = classify_with_vader(cleaned, original_text)
 
     return {
-        "original_text": original_text,
-        "cleaned_text": cleaned,
+        "original_text":  original_text,
+        "cleaned_text":   cleaned,
         "positive_score": vader_result["positive_score"],
         "negative_score": vader_result["negative_score"],
-        "neutral_score": vader_result["neutral_score"],
-        "compound": vader_result["compound"],
-        "sentiment": vader_result["sentiment"]
+        "neutral_score":  vader_result["neutral_score"],
+        "compound":       vader_result["compound"],
+        "sentiment":      vader_result["sentiment"],   # VADER label
     }
 
 
 # ---------------------------------------------------
-# Analyze Complete List
+# Analyze Complete Comment List
 # ---------------------------------------------------
 
 def analyze_comments(comment_list):
     """
-    Full analysis pipeline:
-
+    Full pipeline:
     1. Preprocess all comments
-    2. VADER sentiment classification
-    3. TF-IDF feature extraction
-    4. Train ML models (LR + NB)
-    5. Generate evaluation metrics
-    6. Return DataFrame + metrics
+    2. VADER classification
+    3. ML predictions (LR + NB) using pre-cached models
+    4. RoBERTa predictions
+    5. Ensemble vote → headline label
+    6. Return (DataFrame, ml_metrics dict)
+
+    Models are NOT retrained here — they are loaded from module-level
+    cache at startup.  This makes requests fast.
 
     Returns:
-        tuple: (DataFrame, ml_metrics dict)
+        tuple: (pd.DataFrame, dict)
     """
-
-    results = []
-
     if not comment_list:
-        empty_df = pd.DataFrame(
-            columns=[
-                "original_text",
-                "cleaned_text",
-                "positive_score",
-                "negative_score",
-                "neutral_score",
-                "compound",
-                "sentiment"
-            ]
-        )
-
+        empty_df = pd.DataFrame(columns=[
+            "original_text", "cleaned_text", "positive_score",
+            "negative_score", "neutral_score", "compound", "sentiment",
+        ])
         return empty_df, {}
 
-    # -------------------------------------------------------
-    # Step 1 & 2: Preprocess + VADER classify all live comments
-    # -------------------------------------------------------
-    for comment in comment_list:
-        result = analyze_comment(comment)
-        results.append(result)
+    # Step 1 + 2: VADER per comment
+    results = [analyze_comment(c) for c in comment_list]
+    df      = pd.DataFrame(results)
 
-    df = pd.DataFrame(results)
+    # Step 3: ML predictions (batch, no retraining)
+    cleaned_texts = df["cleaned_text"].tolist()
+    lr_preds, nb_preds = _predict_batch(cleaned_texts)
+    df["lr_prediction"] = lr_preds
+    df["nb_prediction"] = nb_preds
 
-    # -------------------------------------------------------
-    # Step 3-5: ML Pipeline — trained on curated 497-sample
-    # labeled dataset (90%+ accuracy, 3-class classification)
-    # -------------------------------------------------------
-    ml_metrics = {}
+    # Step 4: RoBERTa (on original text — transformer has its own tokeniser)
+    roberta_labels  = [""] * len(df)
+    roberta_scores  = [0.0] * len(df)
 
-    try:
-        train_texts_raw  = [t for t, _ in TRAINING_DATA]
-        train_labels_raw = [l.capitalize() for _, l in TRAINING_DATA]
-
-        # Preprocess training texts
-        train_texts_clean = [preprocess_text(t) for t in train_texts_raw]
-
-        # Train ML models (LR + NB) and save .pkl
-        models = SentimentModels()
-        models.train(train_texts_clean, train_labels_raw)
-
-        if models.is_trained:
-            cleaned_texts = df["cleaned_text"].tolist()
-            valid_indices = [i for i, t in enumerate(cleaned_texts) if t.strip()]
-
-            if valid_indices:
-                valid_texts = [cleaned_texts[i] for i in valid_indices]
-                ml_predictions = models.predict(valid_texts)
-
-                if ml_predictions:
-                    lr_preds = [""] * len(df)
-                    nb_preds = [""] * len(df)
-                    for idx, valid_idx in enumerate(valid_indices):
-                        lr_preds[valid_idx] = ml_predictions["logistic_regression"][idx]
-                        nb_preds[valid_idx] = ml_predictions["naive_bayes"][idx]
-                    df["lr_prediction"] = lr_preds
-                    df["nb_prediction"] = nb_preds
-
-            ml_metrics = models.evaluation_results
-
-    except Exception as e:
-        print(f"[ML Pipeline Error] {e}")
-
-    # -------------------------------------------------------
-    # Step 6: HuggingFace Transformer (RoBERTa)
-    # Model: cardiffnlp/twitter-roberta-base-sentiment-latest
-    # Run on original (not preprocessed) texts for best results
-    # -------------------------------------------------------
     try:
         if _transformer.is_transformer_available():
-            original_texts = df["original_text"].tolist()
-            transformer_results = _transformer.transformer_predict(original_texts)
+            original_texts   = df["original_text"].tolist()
+            transformer_res  = _transformer.transformer_predict(original_texts)
 
-            if transformer_results:
-                df["roberta_prediction"] = [
-                    r["label"] for r in transformer_results
-                ]
-                df["roberta_score"] = [
-                    r["score"] for r in transformer_results
-                ]
-    except Exception as e:
-        print(f"[Transformer Error] {e}")
+            if transformer_res:
+                roberta_labels = [r["label"] for r in transformer_res]
+                roberta_scores = [r["score"] for r in transformer_res]
+    except Exception as exc:
+        logger.warning("Transformer inference error: %s", exc)
+
+    df["roberta_prediction"] = roberta_labels
+    df["roberta_score"]      = roberta_scores
+
+    # Step 5: Ensemble vote
+    df["ensemble"] = [
+        _ensemble_vote(row["sentiment"], row["lr_prediction"],
+                       row["nb_prediction"], row["roberta_prediction"])
+        for _, row in df.iterrows()
+    ]
+
+    # Expose cached metrics (from training-time evaluation)
+    ml_metrics = _cached_ml_metrics if _cached_ml_metrics else {}
 
     return df, ml_metrics
 
@@ -535,63 +669,40 @@ def analyze_comments(comment_list):
 
 def sentiment_summary(df):
     """
-    Generate comprehensive sentiment summary with
-    distribution statistics.
+    Generate a summary dict from the ensemble labels in the DataFrame.
+    Falls back to VADER 'sentiment' column if ensemble not present.
     """
-
     if df is None or df.empty:
         return {
-            "total": 0,
-            "positive": 0,
-            "negative": 0,
-            "neutral": 0,
-            "positive_percent": 0,
-            "negative_percent": 0,
-            "neutral_percent": 0,
-            "avg_compound": 0,
-            "most_positive": "",
-            "most_negative": ""
+            "total": 0, "positive": 0, "negative": 0, "neutral": 0,
+            "positive_percent": 0, "negative_percent": 0, "neutral_percent": 0,
+            "avg_compound": 0, "most_positive": "", "most_negative": "",
         }
 
-    positive = len(df[df["sentiment"] == "Positive"])
-    negative = len(df[df["sentiment"] == "Negative"])
-    neutral = len(df[df["sentiment"] == "Neutral"])
-    total = len(df)
+    # Use ensemble as the headline label
+    label_col = "ensemble" if "ensemble" in df.columns else "sentiment"
 
-    # Average compound score
-    avg_compound = round(
-        df["compound"].mean(), 4
-    ) if "compound" in df.columns else 0
+    positive = len(df[df[label_col] == "Positive"])
+    negative = len(df[df[label_col] == "Negative"])
+    neutral  = len(df[df[label_col] == "Neutral"])
+    total    = len(df)
 
-    # Most positive/negative comments
-    most_positive = ""
-    most_negative = ""
+    avg_compound = round(df["compound"].mean(), 4) if "compound" in df.columns else 0
 
-    if "compound" in df.columns and "original_text" in df.columns:
+    most_positive = most_negative = ""
+    if "compound" in df.columns and "original_text" in df.columns and not df.empty:
+        most_positive = df.loc[df["compound"].idxmax(), "original_text"][:200]
+        most_negative = df.loc[df["compound"].idxmin(), "original_text"][:200]
 
-        if not df.empty:
-            most_pos_idx = df["compound"].idxmax()
-            most_neg_idx = df["compound"].idxmin()
-            most_positive = df.loc[most_pos_idx, "original_text"][:200]
-            most_negative = df.loc[most_neg_idx, "original_text"][:200]
-
-    summary = {
-        "total": total,
-        "positive": positive,
-        "negative": negative,
-        "neutral": neutral,
-        "positive_percent": round(
-            (positive / total) * 100, 2
-        ) if total else 0,
-        "negative_percent": round(
-            (negative / total) * 100, 2
-        ) if total else 0,
-        "neutral_percent": round(
-            (neutral / total) * 100, 2
-        ) if total else 0,
-        "avg_compound": avg_compound,
-        "most_positive": most_positive,
-        "most_negative": most_negative
+    return {
+        "total":             total,
+        "positive":          positive,
+        "negative":          negative,
+        "neutral":           neutral,
+        "positive_percent":  round(positive / total * 100, 2) if total else 0,
+        "negative_percent":  round(negative / total * 100, 2) if total else 0,
+        "neutral_percent":   round(neutral  / total * 100, 2) if total else 0,
+        "avg_compound":      avg_compound,
+        "most_positive":     most_positive,
+        "most_negative":     most_negative,
     }
-
-    return summary

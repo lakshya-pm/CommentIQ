@@ -106,13 +106,20 @@ def fetch_comments(submission, limit=100):
 # Analyze Reddit URL
 # ---------------------------------------------------
 
-def fetch_post_from_url(url):
+def fetch_post_from_url(url, limit=500):
+    """
+    Fetch a Reddit post and its comments.
 
+    Args:
+        url   : Reddit post URL
+        limit : Maximum number of top-level comments to fetch (default 500)
+    """
     submission = get_reddit_client().submission(url=url)
 
     details = fetch_post_details(submission)
 
-    details["comments_list"] = fetch_comments(submission)
+    # Pass the user-selected limit through (previously hardcoded to 100)
+    details["comments_list"] = fetch_comments(submission, limit=limit)
 
     return details
 

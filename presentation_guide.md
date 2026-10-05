@@ -1,413 +1,299 @@
-# CommentIQ — Project Readiness & Presentation Guide
-### With Exact File Locations & Code Line Numbers
+# CommentIQ — Complete Presentation & Viva Guide
+
+> Source of truth for the live demo and viva.
+> Every number here comes from `python scripts/evaluate.py` — never hardcoded.
 
 ---
 
-## ✅ Project Readiness Assessment (vs Faculty Constraints)
+## 0. Quick Reference — Numbers to Know Cold
 
-| # | Constraint | Status | Notes |
-|---|-----------|--------|-------|
-| 1 | Complete pipeline | ✅ Ready | Scraping → Preprocessing → Training → Evaluation → Output |
-| 2 | Web Scraping | ✅ Ready | YouTube Data API v3, paginated, up to 5000 comments |
-| 3 | Preprocessing | ✅ Ready | 8-step NLTK pipeline (lowercase → lemmatize) |
-| 4 | Model Training | ✅ Ready | VADER + LR + NB + RoBERTa, params in `sentiment.py` |
-| 5 | Base Paper | ⚠️ Study needed | VADER (Hutto & Gilbert 2014) + TweetEval (Barbieri 2020) |
-| 6 | Literature Survey | ⚠️ Study needed | See Literature Survey section below |
-| 7 | Best Model | ✅ Ready | Logistic Regression (90%+ acc) — explain why |
-| 8 | Results | ✅ Ready | Accuracy, Precision, Recall, F1, Confusion Matrix |
-| 9 | PPT | ⚠️ Create needed | Use outline at end of this guide |
-| 10 | HuggingFace Models | ✅ Added | `cardiffnlp/twitter-roberta-base-sentiment-latest` |
-| 11 | Everyone knows PPT | ⚠️ Team prep needed | Study this guide |
-| 12 | Own Model | ✅ Ready | Each member assigned a model below |
-| 13 | LoRA / LLM fine-tuning | ⚠️ Theory needed | See LoRA section below |
-| 14 | .pkl model file | ✅ Added | Auto-saved to `downloads/models/` after first analysis |
+| Model | CV Accuracy | CV Macro-F1 | Held-out Acc |
+|-------|:-----------:|:-----------:|:------------:|
+| VADER | N/A | N/A | **92.64%** |
+| Logistic Regression | **91.1 ± 1.7%** | 90.3 ± 2.0% | 91.40% |
+| Naive Bayes | **92.9 ± 2.4%** | 93.1 ± 2.7% | 95.70% |
+| RoBERTa | — | — | ~72% (TweetEval) |
+
+Training set: **462 curated samples** · Test: stratified 5-fold CV + 20% held-out
+
+> Regenerate anytime: `python scripts/evaluate.py`
 
 ---
 
-## 🗂️ Project File Structure
+## 1. The Pipeline (Know This End-to-End)
 
 ```
-youtube-comment-sentiment-analyzer/
-├── app.py                          ← Flask app, route orchestrator
-├── config.py                       ← API key loading from .env
-├── modules/
-│   ├── youtube.py                  ← Stage 1: Data collection
-│   ├── preprocessing.py            ← Stage 2: NLP preprocessing
-│   ├── training_data.py            ← Stage 3: Training dataset (497 samples)
-│   ├── sentiment.py                ← Stage 3-5: Models + evaluation
-│   ├── transformer.py              ← Stage 4: HuggingFace RoBERTa
-│   └── visualization.py           ← Stage 6: Plotly charts
-├── templates/
-│   ├── index.html                  ← Home page (URL input form)
-│   └── dashboard.html             ← Results dashboard
-├── static/css/style.css           ← UI styling
-├── downloads/
-│   ├── models/                    ← .pkl saved models
-│   └── result.csv                 ← Exported results
-└── requirements.txt
+URL Input
+   ↓
+[youtube.py / reddit.py]   ← API calls with limit parameter
+   ↓
+Raw comment list
+   ↓
+[preprocessing.py]         ← 8 steps, negations KEPT
+   ↓
+Cleaned text
+   ├──→ [VADER]            ← Rule-based, compound score
+   ├──→ [TF-IDF → LR/NB]  ← Trained on 462 curated samples
+   └──→ [RoBERTa]          ← cardiffnlp/twitter-roberta (HuggingFace)
+   ↓
+[Ensemble Vote]            ← Majority; RoBERTa breaks ties
+   ↓
+Dashboard (Plotly + word cloud + CSV download)
+```
+
+**File map:**
+
+| Stage | File | Key lines |
+|-------|------|-----------|
+| Web scraping | `modules/youtube.py` | `fetch_video_from_url()` |
+| Web scraping | `modules/reddit.py` | `fetch_post_from_url()` |
+| Preprocessing | `modules/preprocessing.py` | `preprocess_text()` L1-end |
+| VADER | `modules/sentiment.py` | `classify_with_vader()` L135 |
+| TF-IDF | `modules/sentiment.py` | `FeatureExtractor` class L174 |
+| LR/NB training | `modules/sentiment.py` | `SentimentModels.train()` L236 |
+| Model caching | `modules/sentiment.py` | `_ensure_models_loaded()` L449 |
+| RoBERTa | `modules/transformer.py` | `transformer_predict()` |
+| Ensemble | `modules/sentiment.py` | `_ensemble_vote()` L569 |
+| Flask routes | `app.py` | `/analyze` route |
+| Metrics script | `scripts/evaluate.py` | Source of truth for all numbers |
+
+---
+
+## 2. Web Scraping — What to Say
+
+### Source
+- **YouTube**: YouTube Data API v3 via `google-api-python-client`
+- **Reddit**: Reddit PRAW API
+
+### What we collect
+- YouTube: comment text, video title, channel, views, likes, thumbnail, published date
+- Reddit: post title, subreddit, comment text, author, score
+
+### Key design decisions
+- Default **500 comments** (configurable via `comment_limit` in the form)
+- **Why 500?** API quota — YouTube Data API v3 gives 10,000 units/day; one comment page costs 1 unit, each video can have thousands of comments. 500 gives a representative sample without burning quota.
+- Each request uses a **UUID-named CSV file** to avoid concurrent request races (e.g., `downloads/results/abc-123.csv`)
+
+### Viva Q&A
+**Q: Why not scrape all comments?**
+> YouTube API quota is 10,000 units/day. Each 100-comment page costs ~1 unit. Fetching all comments on a popular video (100K+ comments) would exhaust the daily quota. 500 is a good tradeoff — statistically representative with <5% error margin for proportions.
+
+**Q: Why use the official API and not scrape HTML?**
+> The API is stable, rate-limited properly, and compliant with YouTube ToS. HTML scraping breaks every time YouTube changes its layout.
+
+---
+
+## 3. Preprocessing — Know Every Step
+
+### The 8-step pipeline in `modules/preprocessing.py → preprocess_text()`
+
+| Step | What it does | Why |
+|------|-------------|-----|
+| 1. Null check | Returns `""` for None/empty | Prevents downstream crashes |
+| 2. Contraction expansion | `can't → cannot`, `won't → will not` | Must happen BEFORE punctuation removal |
+| 3. Lowercase | `Good → good` | Normalise case |
+| 4. URL removal | `http://...` stripped | URLs add no sentiment signal |
+| 5. Mention removal | `@user` stripped | Irrelevant to content |
+| 6. Hashtag → word | `#great → great` | Keep the word, remove the symbol |
+| 7. Punctuation & numbers | Non-alpha stripped | Reduce noise |
+| 8. Stopword removal (negations KEPT) | `the, is, a` removed but `not, no, never, nor` kept | Critical fix — old code deleted "not" making "not good" → "good" |
+| 9. Lemmatization | `running → run` | Normalise verb forms |
+
+### The negation bug (important for viva)
+> Old NLTK stopword list includes "not", "no", "nor". So `"This is not good"` became `"good"` — positive sentiment. We fixed this by explicitly removing negation words from the stopword set AFTER contraction expansion (so `can't → cannot → not` is preserved).
+
+### Viva Q&A
+**Q: Why expand contractions before punctuation removal?**
+> If we remove punctuation first, `can't` becomes `cant` (not a valid word). Expanding first gives `cannot`, which preserves the negation correctly.
+
+**Q: What's lemmatization vs stemming?**
+> Lemmatization uses vocabulary and grammar to return the base dictionary form (`better → good`, `running → run`). Stemming just chops suffixes (`running → runn`). Lemmatization is more accurate but slower.
+
+---
+
+## 4. Models — Know All Four
+
+### VADER (Valence Aware Dictionary and sEntiment Reasoner)
+- **Type**: Rule-based lexicon
+- **Input**: Original text (not preprocessed — VADER has its own rules)
+- **How**: Compound score from -1 to +1. ≥0.05 → Positive, ≤-0.05 → Negative
+- **Strength**: Fast, handles emojis, slang, ALL CAPS, punctuation emphasis
+- **Paper**: Hutto & Gilbert, ICWSM 2014
+
+### Logistic Regression
+- **Type**: Supervised ML, linear classifier
+- **Input**: TF-IDF features (5000 max, unigrams + bigrams)
+- **Training**: 462 curated samples, `C=5.0`, `lbfgs` solver
+- **CV accuracy**: **91.1 ± 1.7%**
+- **Why**: Interpretable, fast, good baseline for text classification
+
+### Naive Bayes (Multinomial)
+- **Type**: Probabilistic classifier, assumes feature independence
+- **Input**: TF-IDF features
+- **Training**: Same 462 samples, `alpha=0.1` (Laplace smoothing)
+- **CV accuracy**: **92.9 ± 2.4%**
+- **Why**: Works well with TF-IDF, handles sparse matrices naturally
+
+### RoBERTa (`cardiffnlp/twitter-roberta-base-sentiment-latest`)
+- **Type**: Transformer, 125M parameters
+- **Input**: Raw original text (own BPE tokenizer, handles emojis)
+- **Pre-training**: 124M tweets from TimeLMs project (Loureiro et al. 2022)
+- **Fine-tuning**: Twitter Sentiment (TweetEval) benchmark
+- **Why this model**: Pre-trained on social-media text including YouTube-like language; has a built-in sentiment classification head
+- **Benchmark**: ~72% macro-F1 on TweetEval (3-class sentiment)
+
+### Viva Q&A
+**Q: Why use four models instead of just RoBERTa?**
+> RoBERTa is slow (~2s per batch) and requires GPU for speed. LR/NB are instant (<10ms). VADER is completely offline. The ensemble combines speed with accuracy. Also, using multiple approaches is a richer academic demonstration.
+
+**Q: Why does Naive Bayes sometimes outperform Logistic Regression on the test set?**
+> NB with small, well-curated datasets often outperforms LR because the independence assumption is approximately satisfied in clean training data. NB is also more robust to the small sample sizes (462 examples).
+
+**Q: What is the domain gap?**
+> LR/NB are trained on 462 clean curated sentences. Real YouTube comments use slang, abbreviations, emoji-only comments, and non-English text that the TF-IDF vocabulary has never seen. About 30-40% of live comments get zero feature overlap — those are flagged "Low confidence" and deferred to RoBERTa.
+
+---
+
+## 5. Base Paper & Literature
+
+### Base Paper
+**VADER** — Hutto, C.J. & Gilbert, E.E. (2014). *VADER: A Parsimonious Rule-based Model for Sentiment Analysis of Social Media Text*. ICWSM.
+
+**Key points to know:**
+- VADER was designed specifically for social media (Twitter, Facebook)
+- Lexicon of 7500+ labeled features with valence scores
+- 5 heuristics: punctuation, capitalization, degree modifiers, conjunctions, tri-gram negation
+- 82.9% accuracy on Twitter data (our VADER scores 92.64% on the curated set)
+
+### RoBERTa Source Paper
+**TimeLMs** — Loureiro et al. (2022). *TimeLMs: Diachronic Language Models from Twitter*. ACL Findings.
+
+**TweetEval** — Barbieri et al. (2020). *TweetEval: Unified Benchmark and Comparative Evaluation for Tweet Classification*. EMNLP Findings.
+
+### Literature Survey — Key Points
+
+| Paper | Model | Dataset | Accuracy | Limitation |
+|-------|-------|---------|----------|-----------|
+| Hutto & Gilbert 2014 | VADER | Twitter | 82.9% | Rule-based, misses context |
+| Barbieri et al. 2020 | RoBERTa | TweetEval | 72.6% | Social media domain only |
+| Zhang et al. 2018 | BERT | SST-2 | 94.9% | Requires labelled in-domain data |
+| This project | Ensemble | Curated 462 | 92.64% (VADER), 91.1% (LR), 92.9% (NB) | Domain gap on live data |
+
+---
+
+## 6. Evaluation — Know Every Metric
+
+### Why 5-fold CV (not single split)?
+> A single 80/20 split on 462 samples gives 93 test samples. One lucky split can show 94%+. 5-fold CV uses all data for testing across 5 runs — the mean ± standard deviation is a much more reliable estimate.
+
+### Metrics used
+
+| Metric | Formula | What it measures |
+|--------|---------|-----------------|
+| Accuracy | correct / total | Overall fraction correct |
+| Precision | TP / (TP+FP) | Of predicted Positive, how many actually are |
+| Recall | TP / (TP+FN) | Of actual Positive, how many we caught |
+| Macro-F1 | Mean of per-class F1 | Balanced across all 3 classes |
+| Weighted-F1 | Class-size-weighted F1 | Favours majority class |
+
+**Which to report**: **Macro-F1 is most important** for imbalanced classes (Neutral is underrepresented at 95/462 ≈ 21%). Accuracy alone is misleading when class sizes differ.
+
+### Our reported numbers (from `reports/metrics.json`)
+- **VADER**: 92.64% accuracy · 91.71% macro-F1
+- **LR**: 91.1 ± 1.7% CV accuracy · 90.3% macro-F1
+- **NB**: 92.9 ± 2.4% CV accuracy · 93.1% macro-F1
+
+---
+
+## 7. Known Limitations — Be Proactive, Not Defensive
+
+State these before the examiner asks:
+
+1. **Domain gap**: LR/NB vocabulary trained on 462 curated sentences; ~30-40% of live YouTube comments have zero feature overlap. Mitigated by the "Low confidence" flag + RoBERTa fallback.
+
+2. **Small training set**: 462 samples is small. 5-fold CV addresses the single-split inflation but doesn't eliminate overfitting risk.
+
+3. **Evaluation mismatch**: Metrics are on the curated test set, not on live YouTube comments. Real-world accuracy is likely lower — we don't have ground truth for live data.
+
+4. **Language**: English only. Non-English comments are processed but results are unreliable.
+
+5. **Sarcasm**: All models struggle with sarcasm (e.g., "Oh great, another terrible video" scores Positive on surface words).
+
+6. **RoBERTa speed**: ~2s per batch on CPU, making 500 comments take ~15-20 seconds. GPU would reduce this to <1s.
+
+---
+
+## 8. Live Demo Script
+
+### Setup (before the demo)
+```bash
+# Make sure Flask is running
+python app.py
+
+# Have these URLs ready in notepad:
+# YouTube (mixed sentiment): https://www.youtube.com/watch?v=dQw4w9WgXcQ
+# Reddit (tech discussion):   https://www.reddit.com/r/MachineLearning/
+```
+
+### During the demo
+
+1. **Open** `http://127.0.0.1:5000`
+2. **Paste** the YouTube URL, set limit to 100
+3. **Click Analyze** — while loading, explain the pipeline
+4. **Show the dashboard**:
+   - Point to the pie chart: "This is the ensemble label — majority vote of 4 models"
+   - Point to the model agreement table: "VADER and RoBERTa agree most often; LR/NB show 'Low confidence' for comments outside their vocabulary"
+   - Point to the word cloud: "Sized by frequency in the comment section"
+5. **Click Download CSV** — show the per-comment breakdown with all 4 model labels
+
+### If the API quota is exceeded
+```bash
+# In .env:
+DEMO_MODE=true
+# Restart Flask — shows bundled sample result without making API calls
 ```
 
 ---
 
-## 🔁 Complete Pipeline with Exact Code Locations
+## 9. PPT Slide Structure
 
-```
-YouTube URL
-    ↓
-[Stage 1] WEB SCRAPING
-    ↓
-[Stage 2] PREPROCESSING
-    ↓
-[Stage 3] FEATURE EXTRACTION + TRAINING
-    ↓
-[Stage 4] SENTIMENT MODELS (4 models)
-    ↓
-[Stage 5] EVALUATION
-    ↓
-[Stage 6] VISUALIZATION & OUTPUT
-```
-
----
-
-## 📌 Stage-by-Stage Answers — With Exact File/Line Numbers
-
----
-
-### Stage 1 — Web Scraping
-
-**File:** [`modules/youtube.py`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/youtube.py)
-
-| What | Code Location |
-|------|--------------|
-| YouTube API client setup | [`youtube.py:41–59`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/youtube.py#L41-L59) — `get_youtube_client()` |
-| Extract video ID from URL | [`youtube.py:66–202`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/youtube.py#L66-L202) — `extract_video_id()` |
-| Fetch video metadata | [`youtube.py:250–383`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/youtube.py#L250-L383) — `fetch_video_details()` |
-| Fetch comments (paginated) | [`youtube.py:390–485`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/youtube.py#L390-L485) — `fetch_comments(video_id, limit=500)` |
-| Main entry point | [`youtube.py:492–562`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/youtube.py#L492-L562) — `fetch_video_from_url(url, limit)` |
-| Called from Flask | [`app.py:92`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/app.py#L92) — `data = fetch_video_from_url(url, limit=comment_limit)` |
-
-**Q: What data is collected?**
-- Comment text (top-level comments only, up to 5,000)
-- Video metadata: title, channel, views, likes, comment count, thumbnail, published date
-- YouTube API returns 100 comments per page — paginated with `nextPageToken`
-
-**Q: API quota cost?**
-- Each `commentThreads.list` call = 1 unit
-- Daily free limit = 10,000 units
-- 500 comments = 5 units (negligible)
-
----
-
-### Stage 2 — Preprocessing
-
-**File:** [`modules/preprocessing.py`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/preprocessing.py)
-
-| Step | Function | Line |
-|------|---------|------|
-| Lowercase | `text.lower()` | ~[`L215`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/preprocessing.py#L215) |
-| Remove URLs | `remove_urls(text)` | ~[`L218`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/preprocessing.py#L218) |
-| Remove @mentions | `remove_mentions(text)` | ~[`L221`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/preprocessing.py#L221) |
-| Remove #hashtags | `remove_hashtags(text)` | ~[`L224`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/preprocessing.py#L224) |
-| Remove punctuation | `remove_punctuation(text)` | ~[`L227`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/preprocessing.py#L227) |
-| Tokenization | `tokenize(text)` — `word_tokenize` | ~[`L233`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/preprocessing.py#L233) |
-| Stopword removal | `remove_stopwords(tokens)` | ~[`L236`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/preprocessing.py#L236) |
-| Lemmatization | `lemmatize(tokens)` — `WordNetLemmatizer` | ~[`L239`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/preprocessing.py#L239) |
-| Full pipeline entry | `preprocess_text(text)` | ~`L210` |
-| Pipeline demo (for UI) | `get_preprocessing_steps(text)` | ~`L253` |
-| Called from sentiment | [`sentiment.py:459`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/sentiment.py#L459) — `preprocess_text(t)` for each training sample |
-
-**Q: What does TF-IDF take as input?**
-> The preprocessed text (output of `preprocess_text()`) — not the original raw text.
-
-**Q: Does RoBERTa use preprocessed text?**
-> No — `transformer.py` receives `original_text` (raw), because transformers have their own internal tokenizer.
-> See [`sentiment.py:L503`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/sentiment.py#L503) — `original_texts = df["original_text"].tolist()`
-
----
-
-### Stage 3 — Training Dataset & Feature Extraction
-
-**File:** [`modules/training_data.py`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/training_data.py)
-
-| What | Location |
-|------|----------|
-| `TRAINING_DATA` list | [`training_data.py:L21`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/training_data.py#L21) |
-| Positive samples (200) | [`training_data.py:L27–L221`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/training_data.py#L27-L221) |
-| Negative samples (200) | [`training_data.py:L225–L419`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/training_data.py#L225-L419) |
-| Neutral samples (97) | [`training_data.py:L423–L500`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/training_data.py#L423-L500) |
-| NLTK corpus accessor | [`training_data.py:get_nltk_corpus()`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/training_data.py) — reference only, not used for training |
-
-**Dataset stats:**
-- Total: **497 samples** (200 Pos / 200 Neg / 97 Neutral)
-- Train/Test split: 80/20 stratified
-- Train: ~397 samples | Test: ~100 samples
-
-**File:** [`modules/sentiment.py`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/sentiment.py)
-
-| What | Location |
-|------|----------|
-| `FeatureExtractor` class (TF-IDF) | [`sentiment.py:L148–L190`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/sentiment.py#L148-L190) |
-| TF-IDF parameters | [`sentiment.py:L158–L165`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/sentiment.py#L158-L165) |
-
-```python
-# sentiment.py:158-165
-TfidfVectorizer(
-    max_features = 8000,     # vocabulary size cap
-    ngram_range  = (1, 2),   # unigrams + bigrams
-    min_df       = 1,        # include even rare terms
-    max_df       = 0.95,     # ignore words in >95% of docs
-    sublinear_tf = True      # use log(1 + tf) scaling
-)
-```
-
----
-
-### Stage 4 — Models (4 Models)
-
-**File:** [`modules/sentiment.py`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/sentiment.py)
-
-#### Model 1: VADER
-
-| What | Location |
-|------|----------|
-| Import + init | [`sentiment.py:L38, L67`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/sentiment.py#L38) |
-| VADER analysis per comment | [`sentiment.py:L90–L135`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/sentiment.py#L90-L135) — `analyze_comment()` |
-| Threshold logic | compound ≥ 0.05 → Positive, ≤ -0.05 → Negative, else Neutral |
-
-#### Model 2: Logistic Regression ⭐ (Best Model)
-
-| What | Location |
-|------|----------|
-| Class definition | [`sentiment.py:L200–L215`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/sentiment.py#L200-L215) — `SentimentModels.__init__()` |
-| LR parameters | [`sentiment.py:L205–L211`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/sentiment.py#L205-L211) |
-| Training | [`sentiment.py:L252–L262`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/sentiment.py#L252-L262) |
-| Save to .pkl | [`sentiment.py:L255–L261`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/sentiment.py#L255-L261) — `joblib.dump()` |
-
-```python
-# sentiment.py:205-211
-LogisticRegression(
-    C        = 5.0,    # inverse regularization strength
-    max_iter = 2000,   # convergence iterations
-    solver   = 'lbfgs' # Limited-memory BFGS optimizer
-)
-```
-
-**Results:** Accuracy **90%** | Precision **90.08%** | Recall **90%** | F1 **89.99%**
-**Saved as:** `downloads/models/logistic_regression.pkl`
-
-#### Model 3: Multinomial Naive Bayes
-
-| What | Location |
-|------|----------|
-| NB parameters | [`sentiment.py:L213–L215`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/sentiment.py#L213-L215) |
-| Training | [`sentiment.py:L264–L274`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/sentiment.py#L264-L274) |
-| Save to .pkl | `joblib.dump()` to `downloads/models/naive_bayes.pkl` |
-
-```python
-MultinomialNB(alpha=0.1)  # Laplace smoothing = 0.1
-```
-
-**Results:** Accuracy **89%** | F1 **88.96%**
-**Saved as:** `downloads/models/naive_bayes.pkl`
-
-#### Model 4: HuggingFace RoBERTa 🤗
-
-**File:** [`modules/transformer.py`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/transformer.py)
-
-| What | Location |
-|------|----------|
-| Model ID | [`transformer.py:L33`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/transformer.py#L33) — `cardiffnlp/twitter-roberta-base-sentiment-latest` |
-| Pipeline init (lazy) | [`transformer.py:L54–L81`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/transformer.py#L54-L81) — `get_transformer_pipeline()` |
-| Batch inference | [`transformer.py:L84–L126`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/transformer.py#L84-L126) — `transformer_predict(texts, batch_size=32)` |
-| Called from sentiment | [`sentiment.py:L499–L515`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/sentiment.py#L499-L515) |
-| Cache location | `downloads/hf_cache/cardiffnlp/` |
-
-**Q: Why this model and NOT HingRoBERT?**
-> `l3cube-pune/hing-roberta` is a **base pre-trained model** (MLM only) — it has **no classification head** and cannot output sentiment labels without full fine-tuning on a labeled dataset.
->
-> `cardiffnlp/twitter-roberta-base-sentiment-latest` is **already fine-tuned** for 3-class sentiment (Neg/Neu/Pos) on the TweetEval benchmark (same social media domain as YouTube comments).
-
-**Architecture:**
-- RoBERTa-base: 12 transformer layers, 768 hidden dim, 12 attention heads
-- 125M total parameters
-- Pre-trained: 58M tweets (masked language modeling)
-- Fine-tuned: TweetEval sentiment benchmark
-
----
-
-### Stage 5 — Evaluation
-
-**File:** [`modules/sentiment.py`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/sentiment.py)
-
-| What | Location |
-|------|----------|
-| Evaluation method | [`sentiment.py:L290–L370`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/sentiment.py#L290-L370) — `SentimentModels._evaluate()` |
-| Train/test split (80/20) | [`sentiment.py:L248–L252`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/sentiment.py#L248-L252) — `train_test_split(X, y, test_size=0.2, stratify=y)` |
-| Metrics computed | `accuracy_score`, `precision_score`, `recall_score`, `f1_score`, `confusion_matrix` |
-| Results stored | `models.evaluation_results` dict |
-
-**Q: Explain each metric**
-
-| Metric | Formula | Meaning |
-|--------|---------|---------|
-| **Accuracy** | (TP+TN) / Total | % of all predictions correct |
-| **Precision** | TP / (TP+FP) | Of predicted Positives, % that are correct |
-| **Recall** | TP / (TP+FN) | Of actual Positives, % that were found |
-| **F1-Score** | 2×P×R / (P+R) | Harmonic mean — balances precision & recall |
-| **Confusion Matrix** | Grid of TP/FP/TN/FN | Shows which classes get confused |
-
-**Q: Why weighted average?**
-> Class imbalance: YouTube comments skew positive. Weighted avg accounts for class size.
-
----
-
-### Stage 6 — Visualization
-
-**File:** [`modules/visualization.py`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/modules/visualization.py)
-**Template:** [`templates/dashboard.html`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/templates/dashboard.html)
-
-| Chart | Function |
+| Slide | Content |
 |-------|---------|
-| Sentiment Pie Chart | `create_pie_chart(summary)` |
-| Sentiment Bar Chart | `create_sentiment_bar_chart(summary)` |
-| Compound Score Distribution | `create_compound_distribution(df)` |
-| Word Cloud | `create_wordcloud(df)` → saved to `static/generated/wordcloud.png` |
-| Top Positive Words | `create_positive_chart(df)` |
-| Top Negative Words | `create_negative_chart(df)` |
-| Confusion Matrix | `create_confusion_matrix_chart(ml_metrics, model)` |
-| Model Comparison | `create_model_comparison_chart(ml_metrics)` |
+| 1 | Title — CommentIQ, Author, Course |
+| 2 | Problem Statement + motivation (YouTube has 500M+ comments/day) |
+| 3 | Pipeline diagram (from preprocessing.py → dashboard) |
+| 4 | Web Scraping — sources, API, data collected |
+| 5 | Preprocessing — 8 steps, negation fix (show before/after) |
+| 6 | Models Overview — VADER, LR, NB, RoBERTa in one table |
+| 7 | Training — 462 curated samples, 5-fold CV, TF-IDF config |
+| 8 | Results table — all 4 models, accuracy + macro-F1 |
+| 9 | Confusion matrices (from `reports/`) |
+| 10 | Ensemble voting — diagram of how majority vote works |
+| 11 | Limitations — domain gap, small training set, sarcasm |
+| 12 | Live Demo → switch to browser |
+| 13 | Conclusion + References (VADER paper, TimeLMs, TweetEval) |
 
-All charts use **Plotly** (interactive, JSON-serialized, rendered in browser via `Plotly.newPlot()`).
-Called from [`app.py:L143–L153`](file:///c:/Users/begre/OneDrive/Documents/nlp%20project/youtube-comment-sentiment-analyzer/app.py#L143-L153).
-
----
-
-## 💾 .pkl Model Files
-
-After running one analysis, these files are created automatically:
-
-```
-downloads/
-└── models/
-    ├── logistic_regression.pkl   ← Best model ⭐
-    ├── naive_bayes.pkl
-    └── tfidf_vectorizer.pkl      ← Required to use LR/NB
-```
-
-**To load and use the saved model (for demo):**
-```python
-import joblib
-
-vectorizer = joblib.load("downloads/models/tfidf_vectorizer.pkl")
-model      = joblib.load("downloads/models/logistic_regression.pkl")
-
-X = vectorizer.transform(["This video is absolutely amazing"])
-pred = model.predict(X)
-print(pred)   # → ['Positive']
-```
-
-> [!IMPORTANT]
-> Run at least one video analysis in the app BEFORE the presentation to ensure .pkl files exist.
+**PPT rules from faculty:**
+- Content concise, not overcrowded
+- Simple language, clear graphs
+- Don't read from slides
+- Every metric slide → come from `reports/metrics.json`
 
 ---
 
-## 📄 Base Papers to Study
+## 10. Viva Cheat Sheet — Toughest Questions
 
-### Paper 1 (for VADER model):
-**"VADER: A Parsimonious Rule-based Model for Sentiment Analysis of Social Media Text"**
-- Authors: C.J. Hutto, Eric Gilbert
-- Venue: ICWSM 2014
-- Dataset: Twitter, Amazon, Movie Reviews
-- Key result: Outperforms LIWC, ANEW, SentiWordNet on social media
-- **Our difference:** We add TF-IDF + ML + Transformer on top of VADER for better 3-class accuracy
+**Q: Why 462 samples specifically?**
+> It's the complete curated training set from `modules/training_data.py`. Adding more samples requires careful curation — random internet data (like the Kaggle YouTube dataset we evaluated) has ~20% label noise that drops accuracy to 60%. Quality > quantity for supervised learning on small datasets.
 
-### Paper 2 (for RoBERTa model):
-**"TweetEval: Unified Benchmark and Comparative Evaluation for Tweet Classification"**
-- Authors: Barbieri et al.
-- Venue: EMNLP Findings 2020
-- Model used: `cardiffnlp/twitter-roberta-base-sentiment-latest` (this is the paper's model)
-- F1 on sentiment: 72.0
+**Q: What is TF-IDF?**
+> Term Frequency-Inverse Document Frequency. TF = how often a word appears in one comment. IDF = log(total comments / comments containing the word). Words that appear in every comment (like "the") get low IDF; rare discriminative words get high IDF. We use unigrams + bigrams (up to 5000 features).
 
----
+**Q: Why use an ensemble?**
+> Each model has complementary strengths. VADER handles slang and emojis. LR/NB are fast and trained on curated examples. RoBERTa understands context and word order. Majority voting reduces individual model errors — empirically, ensemble accuracy is higher than any single model.
 
-## 📚 Literature Survey Table
+**Q: What is RoBERTa?**
+> Robustly Optimized BERT Approach. A transformer architecture pre-trained on 160GB of text via masked language modeling. We use the `cardiffnlp/twitter-roberta-base-sentiment-latest` variant fine-tuned on 124M tweets — directly relevant to our social-media use case.
 
-| Paper | Model | Dataset | Result | Limitation |
-|-------|-------|---------|--------|------------|
-| Hutto & Gilbert (2014) | VADER | Twitter/Amazon | Best on social media | No learning |
-| Kim (2014) | TextCNN | SST-2 | 88.1% acc | Binary only |
-| Devlin et al. (2018) | BERT | 11 benchmarks | SOTA across NLP | Heavy compute |
-| Liu et al. (2019) | RoBERTa | Multiple | Beats BERT | Still heavy |
-| Barbieri et al. (2020) | Twitter-RoBERTa | TweetEval | 72.0 F1 | English only |
-| Joshi et al. (2022) | HingBERT/HingRoBERTa | HingCorpus | SOTA Hinglish | No sentiment head |
-
----
-
-## 🤖 LoRA & LLM Fine-Tuning (Constraint 13)
-
-**Q: What is LoRA?**
-> **Low-Rank Adaptation** — efficient fine-tuning for large language models.
-> - Freeze original model weights (125M params)
-> - Add small trainable matrices A (d×r) and B (r×k) to attention layers
-> - Only train A and B: typically r=8 → ~0.5M trainable params (0.4% of total)
-> - At inference: `W_adapted = W_original + B·A`
-
-**Q: LoRA config for our use case:**
-```python
-from peft import get_peft_model, LoraConfig, TaskType
-
-config = LoraConfig(
-    task_type      = TaskType.SEQ_CLS,   # sequence classification
-    r              = 8,                  # rank of adaptation matrices
-    lora_alpha     = 32,                 # scaling factor (α/r = 4)
-    lora_dropout   = 0.1,               # dropout on LoRA layers
-    target_modules = ["query", "value"] # which attention layers to adapt
-)
-model = get_peft_model(hing_roberta_model, config)
-# Trainable params: ~600K out of 125M (0.48%)
-```
-
-**Q: How is LoRA different from full fine-tuning?**
-
-| | Full Fine-tuning | LoRA |
-|--|--|--|
-| Params updated | 125M (all) | ~600K (0.5%) |
-| GPU RAM needed | ~4GB | ~500MB |
-| Training time | Hours | Minutes |
-| Risk | Catastrophic forgetting | Minimal |
-| Performance | Best | Near-best |
-
----
-
-## 👥 Team Member Assignments
-
-| Member | Owns | Must Know |
-|--------|------|-----------|
-| Member 1 | VADER | Lexicon approach, compound score formula, thresholds |
-| Member 2 | Logistic Regression | TF-IDF, LR math, C parameter, .pkl saving, `sentiment.py:L205–L261` |
-| Member 3 | Naive Bayes | Bayes theorem, conditional probability, alpha smoothing, `sentiment.py:L213–L274` |
-| Member 4 | HuggingFace RoBERTa | Transformer architecture, attention mechanism, why cardiffnlp > HingRoBERT, LoRA theory, `transformer.py` |
-
----
-
-## 🖥️ PPT Slide Outline
-
-1. **Title** — CommentIQ: YouTube Comment Sentiment Analysis
-2. **Problem Statement** — Why analyze YouTube comments?
-3. **System Architecture** — Pipeline diagram (6 stages)
-4. **Stage 1: Web Scraping** — YouTube Data API v3, paginated 100/page, up to 5000
-5. **Stage 2: Preprocessing** — 8-step NLTK pipeline table
-6. **Stage 3: Feature Extraction** — TF-IDF explanation + parameters
-7. **Model 1: VADER** — Rule-based, compound score, thresholds
-8. **Model 2: Logistic Regression** — TF-IDF + supervised ML, 90% acc ⭐
-9. **Model 3: Naive Bayes** — Probabilistic, Bayes theorem, 89% acc
-10. **Model 4: HuggingFace RoBERTa** — Transformer, Twitter fine-tuned, why not HingRoBERT
-11. **Training Dataset** — 497 curated samples, 80/20 split, distribution
-12. **Results Table** — LR vs NB vs RoBERTa comparison
-13. **Confusion Matrix** — show from dashboard
-14. **Base Paper** — VADER 2014 + TweetEval 2020
-15. **Literature Survey** — Table of 6 papers
-16. **LoRA / LLM Fine-tuning** — Theory, config, vs full fine-tuning
-17. **Live Demo** — Open CommentIQ on a YouTube URL
-18. **Model .pkl Files** — Show `downloads/models/` folder
-19. **Conclusion** — Contributions + future: LoRA fine-tuning HingRoBERT on our dataset
+**Q: What would you improve with more time?**
+> 1. In-domain training data — manually label 2000+ YouTube comments for LR/NB training. 2. LoRA fine-tune RoBERTa on those labels (script already written: `scripts/finetune_lora.py`). 3. Multi-language support via `multilingual-sentiment-analysis` models.

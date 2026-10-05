@@ -1,0 +1,24 @@
+{
+  "vader": {
+    "Positive": {
+      "precision": 90.26,
+      "recall": 96.17,
+      "f1": 93.12,
+      "support": 183
+    },
+    "Negative": {
+      "precision": 98.27,
+      "recall": 92.39,
+      "f1": 95.24,
+      "support": 184
+    },
+    "Neutral": {
+      "precision": 87.23,
+      "recall": 86.32,
+      "f1": 86.77,
+      "support": 95
+    }
+  },
+  "logistic_regression": {},
+  "naive_bayes": {}
+}

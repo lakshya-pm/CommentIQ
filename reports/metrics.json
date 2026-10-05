@@ -1,0 +1,127 @@
+{
+  "dataset": {
+    "total_samples": 462,
+    "label_distribution": {
+      "Positive": 183,
+      "Negative": 184,
+      "Neutral": 95
+    }
+  },
+  "vader": {
+    "accuracy": 92.64,
+    "macro_f1": 91.71,
+    "weighted_f1": 92.66,
+    "per_class": {
+      "Positive": {
+        "precision": 90.26,
+        "recall": 96.17,
+        "f1": 93.12,
+        "support": 183
+      },
+      "Negative": {
+        "precision": 98.27,
+        "recall": 92.39,
+        "f1": 95.24,
+        "support": 184
+      },
+      "Neutral": {
+        "precision": 87.23,
+        "recall": 86.32,
+        "f1": 86.77,
+        "support": 95
+      }
+    },
+    "confusion_matrix": [
+      [
+        176,
+        1,
+        6
+      ],
+      [
+        8,
+        170,
+        6
+      ],
+      [
+        11,
+        2,
+        82
+      ]
+    ],
+    "labels": [
+      "Positive",
+      "Negative",
+      "Neutral"
+    ]
+  },
+  "logistic_regression": {
+    "cv_acc_mean": 91.13,
+    "cv_acc_std": 1.72,
+    "cv_f1_mean": 90.26,
+    "cv_f1_std": 1.96,
+    "accuracy": 91.4,
+    "precision": 91.85,
+    "recall": 91.4,
+    "f1_score": 91.23,
+    "macro_f1": 89.79,
+    "confusion_matrix": [
+      [
+        36,
+        1,
+        0
+      ],
+      [
+        1,
+        35,
+        1
+      ],
+      [
+        5,
+        0,
+        14
+      ]
+    ],
+    "labels": [
+      "Positive",
+      "Negative",
+      "Neutral"
+    ]
+  },
+  "naive_bayes": {
+    "cv_acc_mean": 92.87,
+    "cv_acc_std": 2.39,
+    "cv_f1_mean": 93.07,
+    "cv_f1_std": 2.69,
+    "accuracy": 95.7,
+    "precision": 95.9,
+    "recall": 95.7,
+    "f1_score": 95.72,
+    "macro_f1": 95.61,
+    "confusion_matrix": [
+      [
+        35,
+        2,
+        0
+      ],
+      [
+        0,
+        35,
+        2
+      ],
+      [
+        0,
+        0,
+        19
+      ]
+    ],
+    "labels": [
+      "Positive",
+      "Negative",
+      "Neutral"
+    ]
+  },
+  "roberta": null,
+  "n_folds": 5,
+  "train_size": 462,
+  "test_size": 93
+}

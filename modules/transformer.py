@@ -6,31 +6,37 @@ CommentIQ - NLP Sentiment Analysis Project
 
 Model: cardiffnlp/twitter-roberta-base-sentiment-latest
   - Architecture : RoBERTa-base (125M parameters)
-  - Pre-trained  : Twitter corpus (58M tweets)
+  - Pre-trained  : ~124 million tweets (TimeLMs corpus, Loureiro et al. 2022)
+                   NOT "58M" — that figure referred to an earlier Cardiff NLP
+                   model.  The *-latest variant was updated with the TimeLMs
+                   diachronic pre-training dataset.
   - Fine-tuned   : TweetEval sentiment benchmark
   - Labels       : Negative / Neutral / Positive
-  - Published    : Cardiff NLP, ACL 2022
-  - Paper        : "TweetEval: Unified Benchmark for Tweet Classification"
+  - Paper        : Loureiro et al. (2022)
+                   "TimeLMs: Diachronic Language Models from Twitter"
+                   ACL 2022 Findings.  https://arxiv.org/abs/2202.03829
 
 Why this model (not HingRoBERT):
   - HingRoBERT (l3cube-pune/hing-roberta) is a BASE model only —
-    no sentiment classification head, cannot be used for inference
-    without full fine-tuning on labeled data.
-  - cardiffnlp/twitter-roberta-base-sentiment-latest is ALREADY
+    it has no sentiment classification head and cannot produce sentiment
+    labels without full fine-tuning on a labelled dataset.
+  - cardiffnlp/twitter-roberta-base-sentiment-latest is already
     fine-tuned for 3-class sentiment (Negative/Neutral/Positive)
-    on the same domain (social media), making it directly applicable
-    to YouTube comments.
+    on social-media text, making it directly applicable to YouTube
+    and Reddit comments.
 
 Why better than VADER / classical ML for this domain:
   - Understands context, sarcasm, and short social media text
   - Handles emojis, abbreviations, and informal writing
-  - State-of-the-art accuracy on TweetEval benchmark (72.0 F1)
+  - State-of-the-art on TweetEval benchmark (macro-F1 ≈ 72)
 
 Author: Lakshya Marwaha
 """
 
 import os
-import joblib
+import logging
+
+logger = logging.getLogger(__name__)
 
 # -------------------------------------------------------
 # Lazy-load the HuggingFace pipeline (downloads ~500MB once)
@@ -75,7 +81,7 @@ def get_transformer_pipeline():
             )
 
         except Exception as e:
-            print(f"[HuggingFace] Failed to load transformer: {e}")
+            logger.warning("Failed to load HuggingFace transformer: %s", e)
             _pipeline = None
 
     return _pipeline
@@ -110,7 +116,7 @@ def transformer_predict(texts, batch_size=32):
             results.extend(batch_results)
 
     except Exception as e:
-        print(f"[HuggingFace] Prediction error: {e}")
+        logger.warning("HuggingFace prediction error: %s", e)
         return []
 
     # Normalize labels to standard format
